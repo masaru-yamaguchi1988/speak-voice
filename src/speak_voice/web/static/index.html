@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>speak-voice Web Console</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>speak-voice Web Console</h1>
+    <div id="connection-status" class="status-tag">API 接続中...</div>
+  </header>
+
+  <main>
+    <!-- 左側: 設定 ＆ 調声パネル -->
+    <div class="panel config-panel">
+      <h2>連携設定 ＆ 音声調声</h2>
+
+      <!-- API Provider 設定 -->
+      <div class="form-group">
+        <label for="provider-select">AIプロバイダー (LLM)</label>
+        <select id="provider-select">
+          <option value="auto">自動判別 (入力されたAPI Keyから選択)</option>
+          <option value="ollama">Ollama (ローカルモデル - 無料)</option>
+          <option value="local">Local OpenAI (LM Studio, vLLM - 無料)</option>
+          <option value="openai">OpenAI (API課金)</option>
+          <option value="gemini">Gemini (API課金)</option>
+          <option value="mock">Mock エージェント (テスト用)</option>
+        </select>
+      </div>
+
+      <!-- ローカルLLM/API Key 設定グループ -->
+      <div class="form-group" id="api-config-group">
+        <label>LLM 接続設定</label>
+        <div id="base-url-wrapper" style="display: none; margin-bottom: 0.5rem;">
+          <input type="text" id="base-url" placeholder="Base URL (例: http://localhost:11434/v1)">
+        </div>
+        <div class="api-keys-grid" id="keys-grid">
+          <input type="password" id="openai-key" placeholder="OpenAI API Key">
+          <input type="password" id="gemini-key" placeholder="Gemini API Key">
+        </div>
+        <input type="text" id="model-name" placeholder="モデル名 (例: qwen2.5, gemma2, gpt-4o-mini)" style="margin-top: 0.5rem;">
+      </div>
+
+      <!-- 音声合成エンジン選択 -->
+      <div class="form-group">
+        <label for="engine-select">音声合成エンジン</label>
+        <select id="engine-select">
+          <!-- JSで動的に構築します -->
+        </select>
+      </div>
+
+      <!-- 話者・キャラクター選択 -->
+      <div class="form-group">
+        <label for="speaker-select">話者 / キャラクター</label>
+        <select id="speaker-select">
+          <option value="">エンジンを選択してください</option>
+        </select>
+      </div>
+
+      <!-- 調声用スライダー -->
+      <div class="form-group">
+        <label>声質・調声パラメータ</label>
+        <div class="sliders-grid">
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="slider-title">話速 (Speed)</span>
+              <span id="speed-val" class="slider-value">1.0</span>
+            </div>
+            <input type="range" id="speed" min="0.5" max="2.0" step="0.05" value="1.0">
+          </div>
+
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="slider-title">音高 (Pitch)</span>
+              <span id="pitch-val" class="slider-value">0.0</span>
+            </div>
+            <input type="range" id="pitch" min="-0.5" max="0.5" step="0.05" value="0.0">
+          </div>
+
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="slider-title">抑揚 (Intonation)</span>
+              <span id="intonation-val" class="slider-value">1.0</span>
+            </div>
+            <input type="range" id="intonation" min="0.0" max="2.0" step="0.1" value="1.0">
+          </div>
+
+          <div class="slider-container">
+            <div class="slider-header">
+              <span class="slider-title">音量 (Volume)</span>
+              <span id="volume-val" class="slider-value">1.0</span>
+            </div>
+            <input type="range" id="volume" min="0.0" max="2.0" step="0.1" value="1.0">
+          </div>
+        </div>
+      </div>
+
+      <!-- 感情スタイル設定 (オプション) -->
+      <div class="form-group">
+        <label for="style-input">感情 / スタイル (任意)</label>
+        <input type="text" id="style-input" placeholder="例: happy=50,sad=50 (Voicepeak等用)">
+      </div>
+
+      <!-- テスト発話ボタン -->
+      <div class="form-group" style="margin-top: 1rem;">
+        <button id="test-speak-btn" class="btn btn-secondary">🔊 設定パラメータでテスト再生</button>
+      </div>
+
+      <!-- 外部フック API 案内 -->
+      <div class="form-group" style="margin-top: 1.5rem; background: rgba(255, 255, 255, 0.05); padding: 0.75rem; border-radius: 8px;">
+        <label>⚡ 外部フック (テキスト注入 API)</label>
+        <p style="font-size: 0.8rem; color: #a1a1aa; margin-bottom: 0.5rem;">
+          ブラウザや他のエージェントアプリから以下のエンドポイントへPOST送信することで、任意テキストを即座に音声再生できます。
+        </p>
+        <code style="display: block; background: #18181b; padding: 0.5rem; border-radius: 4px; font-size: 0.75rem; color: #38bdf8; word-break: break-all;">
+          POST /api/hook/speak<br>
+          {"engine":"voicevox", "speaker":"1", "text":"読み上げたい文章"}
+        </code>
+      </div>
+
+      <div class="integration-card">
+        <label>🔖 ブラウザの選択テキストを読み上げ</label>
+        <p>下のボタンをブックマークバーへドラッグしてください。ページ上で文章を選択して押すと、現在の音声設定で読み上げます。</p>
+        <a id="bookmarklet-link" class="btn btn-secondary bookmarklet" href="#">
+          🔊 選択テキストを読み上げ
+        </a>
+        <button id="copy-bookmarklet-btn" class="btn btn-secondary compact-btn" type="button">
+          コードをコピー
+        </button>
+        <p id="bookmarklet-status" class="helper-status" aria-live="polite"></p>
+      </div>
+
+      <div class="integration-card">
+        <label>⌨️ 他のアプリ・ランチャーから読み上げ</label>
+        <p>選択テキストをコピーした後、次のコマンドをRaycast、Alfred、macOSショートカットなどに登録できます。</p>
+        <code class="integration-code">speak-voice-clip --wait</code>
+        <p>テキストを直接渡す場合：</p>
+        <code class="integration-code">speak-voice hook "読み上げたい文章" --wait</code>
+      </div>
+    </div>
+
+    <!-- 右側: チャット対話コンソール -->
+    <div class="panel chat-output-panel">
+      <h2>AIエージェント対話</h2>
+      
+      <!-- メッセージ履歴 -->
+      <div id="chat-messages" class="chat-messages">
+        <div class="message assistant">
+          音声合成コンソールへようこそ！ローカルLLM（Ollama等）を利用すればAPI費用0円で会話読み上げが可能です。<br>
+          調声パラメータを調整して、下のチャットボックスから話しかけてください。
+        </div>
+      </div>
+
+      <!-- チャット入力エリア -->
+      <div class="chat-input-area">
+        <input type="text" id="chat-input" placeholder="AIエージェントに何か言ってみてください...">
+        <button id="chat-send-btn" class="btn btn-primary">送信</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // 定数・状態管理
+    let engines = [];
+    let currentSpeakers = [];
+
+    // DOM要素
+    const engineSelect = document.getElementById("engine-select");
+    const speakerSelect = document.getElementById("speaker-select");
+    const providerSelect = document.getElementById("provider-select");
+    const baseUrlWrapper = document.getElementById("base-url-wrapper");
+    const baseUrlInput = document.getElementById("base-url");
+    const keysGrid = document.getElementById("keys-grid");
+    const connectionStatus = document.getElementById("connection-status");
+    const bookmarkletLink = document.getElementById("bookmarklet-link");
+    const copyBookmarkletBtn = document.getElementById("copy-bookmarklet-btn");
+    const bookmarkletStatus = document.getElementById("bookmarklet-status");
+    
+    // プロバイダー変更時の入力制御
+    providerSelect.addEventListener("change", () => {
+      const val = providerSelect.value;
+      if (val === "ollama") {
+        baseUrlWrapper.style.display = "block";
+        baseUrlInput.value = baseUrlInput.value || "http://localhost:11434/v1";
+        keysGrid.style.display = "none";
+      } else if (val === "local") {
+        baseUrlWrapper.style.display = "block";
+        baseUrlInput.value = baseUrlInput.value || "http://localhost:1234/v1";
+        keysGrid.style.display = "none";
+      } else if (val === "mock") {
+        baseUrlWrapper.style.display = "none";
+        keysGrid.style.display = "none";
+      } else {
+        baseUrlWrapper.style.display = "none";
+        keysGrid.style.display = "grid";
+      }
+    });
+
+    // スライダー群
+    const sliders = ["speed", "pitch", "intonation", "volume"];
+    sliders.forEach(id => {
+      const el = document.getElementById(id);
+      const valEl = document.getElementById(`${id}-val`);
+      el.addEventListener("input", () => {
+        valEl.textContent = Number(el.value).toFixed(2);
+      });
+    });
+
+    // 起動時にエンジン一覧をロード
+    async function loadEngines() {
+      try {
+        const resp = await fetch("/api/engines");
+        engines = await resp.json();
+        
+        engineSelect.innerHTML = "";
+        engines.forEach(eng => {
+          const opt = document.createElement("option");
+          opt.value = eng.key;
+          opt.textContent = `${eng.name} (${eng.available ? "有効" : "無効"})`;
+          if (!eng.available) {
+            opt.style.color = "#ef4444";
+          }
+          engineSelect.appendChild(opt);
+        });
+
+        // 最初のエンジンの話者一覧をロード
+        if (engines.length > 0) {
+          await loadSpeakers(engines[0].key);
+        }
+        updateBookmarklet();
+        connectionStatus.textContent = "API 接続完了";
+        connectionStatus.style.borderColor = "var(--success-color)";
+        connectionStatus.style.color = "var(--success-color)";
+      } catch (err) {
+        connectionStatus.textContent = "API 接続エラー";
+        connectionStatus.style.borderColor = "var(--error-color)";
+        connectionStatus.style.color = "var(--error-color)";
+        console.error("Failed to load engines:", err);
+      }
+    }
+
+    // 指定したエンジンの話者一覧をロード
+    async function loadSpeakers(engineKey) {
+      speakerSelect.innerHTML = "<option>話者リストを取得中...</option>";
+      try {
+        const resp = await fetch(`/api/speakers?engine=${engineKey}`);
+        currentSpeakers = await resp.json();
+        
+        speakerSelect.innerHTML = "";
+        if (currentSpeakers.length === 0) {
+          speakerSelect.innerHTML = "<option value=''>利用可能な話者がいません</option>";
+          return;
+        }
+
+        currentSpeakers.forEach(sp => {
+          const opt = document.createElement("option");
+          opt.value = sp.id;
+          opt.textContent = sp.name;
+          speakerSelect.appendChild(opt);
+        });
+        updateBookmarklet();
+      } catch (err) {
+        speakerSelect.innerHTML = "<option value=''>話者のロードに失敗しました</option>";
+        console.error("Failed to load speakers:", err);
+      }
+    }
+
+    // エンジン切り替えイベント
+    engineSelect.addEventListener("change", (e) => {
+      loadSpeakers(e.target.value);
+    });
+
+    // 調声パラメータ値の取得
+    function getTuningParams() {
+      return {
+        engine: engineSelect.value,
+        speaker: speakerSelect.value,
+        speed: parseFloat(document.getElementById("speed").value),
+        pitch: parseFloat(document.getElementById("pitch").value),
+        intonation: parseFloat(document.getElementById("intonation").value),
+        volume: parseFloat(document.getElementById("volume").value),
+        style: document.getElementById("style-input").value || null
+      };
+    }
+
+    function updateBookmarklet() {
+      const params = getTuningParams();
+      const endpoint = `${window.location.origin}/api/hook/speak`;
+      const payload = {
+        engine: params.engine,
+        speaker: params.speaker,
+        speed: params.speed,
+        pitch: params.pitch,
+        intonation: params.intonation,
+        volume: params.volume,
+        style: params.style,
+        wait: false
+      };
+      const code = `javascript:(()=>{const t=window.getSelection().toString().trim()||prompt('読み上げるテキストを入力してください');if(!t)return;fetch(${JSON.stringify(endpoint)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...${JSON.stringify(payload)},text:t})}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status)}).catch(e=>alert('speak-voiceへ送信できません: '+e.message))})()`;
+      bookmarkletLink.href = code;
+      bookmarkletLink.dataset.code = code;
+    }
+
+    copyBookmarkletBtn.addEventListener("click", async () => {
+      updateBookmarklet();
+      try {
+        await navigator.clipboard.writeText(bookmarkletLink.dataset.code);
+        bookmarkletStatus.textContent = "ブックマークレットをコピーしました。";
+      } catch (err) {
+        bookmarkletStatus.textContent = "コピーできませんでした。ボタンをブックマークバーへドラッグしてください。";
+      }
+    });
+
+    [
+      engineSelect,
+      speakerSelect,
+      ...sliders.map(id => document.getElementById(id)),
+      document.getElementById("style-input")
+    ].forEach(el => el.addEventListener("change", updateBookmarklet));
+
+    // テスト発話
+    document.getElementById("test-speak-btn").addEventListener("click", async () => {
+      const params = getTuningParams();
+      if (!params.speaker) {
+        alert("話者を選択してください");
+        return;
+      }
+      
+      params.text = "これは設定パラメータのテスト音声再生です。";
+      params.wait = true;
+      
+      try {
+        const btn = document.getElementById("test-speak-btn");
+        const originalText = btn.textContent;
+        btn.textContent = "🔊 再生キューへ追加中...";
+        btn.disabled = true;
+
+        const resp = await fetch("/api/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(params)
+        });
+        const result = await resp.json();
+        if (!resp.ok || result.status !== "success") {
+          throw new Error(result.detail || "Playback failed");
+        }
+
+        btn.textContent = originalText;
+        btn.disabled = false;
+      } catch (err) {
+        alert("テスト再生に失敗しました。エンジンが起動しているか確認してください。");
+        document.getElementById("test-speak-btn").textContent = "🔊 設定パラメータでテスト再生";
+        document.getElementById("test-speak-btn").disabled = false;
+      }
+    });
+
+    // チャットメッセージ表示ヘルパー
+    const chatMessages = document.getElementById("chat-messages");
+    function appendMessage(sender, text) {
+      const msgDiv = document.createElement("div");
+      msgDiv.className = `message ${sender}`;
+      msgDiv.textContent = text;
+      chatMessages.appendChild(msgDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return msgDiv;
+    }
+
+    // チャット送信
+    const chatInput = document.getElementById("chat-input");
+    const chatSendBtn = document.getElementById("chat-send-btn");
+
+    async function sendChat() {
+      const prompt = chatInput.value.trim();
+      if (!prompt) return;
+
+      const params = getTuningParams();
+      if (!params.speaker) {
+        alert("話者を選択してください");
+        return;
+      }
+
+      const selectedProvider = providerSelect.value;
+      const openaiKey = document.getElementById("openai-key").value.trim();
+      const geminiKey = document.getElementById("gemini-key").value.trim();
+      const modelName = document.getElementById("model-name").value.trim() || null;
+      const baseUrl = baseUrlInput.value.trim() || null;
+      
+      let apiProvider = selectedProvider;
+      let apiKey = null;
+
+      if (selectedProvider === "auto") {
+        if (openaiKey) {
+          apiProvider = "openai";
+          apiKey = openaiKey;
+        } else if (geminiKey) {
+          apiProvider = "gemini";
+          apiKey = geminiKey;
+        } else {
+          apiProvider = "mock";
+        }
+      } else if (selectedProvider === "openai") {
+        apiKey = openaiKey;
+      } else if (selectedProvider === "gemini") {
+        apiKey = geminiKey;
+      }
+
+      // ユーザーメッセージを追加
+      appendMessage("user", prompt);
+      chatInput.value = "";
+
+      // ローディング/ステータス表示
+      chatSendBtn.disabled = true;
+      chatSendBtn.innerHTML = '<span class="pulse-loader"></span>';
+      
+      // AI返答用プレースホルダーメッセージを作成
+      const responseMsgDiv = appendMessage("assistant", "考え中...");
+
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...params,
+            prompt: prompt,
+            api_provider: apiProvider,
+            api_key: apiKey,
+            base_url: baseUrl,
+            model_name: modelName
+          })
+        });
+
+        if (!resp.ok) {
+          const result = await resp.json();
+          throw new Error(result.detail || "Chat request failed");
+        }
+        
+        if (!resp.body) {
+          throw new Error("ストリーミング応答を受信できませんでした");
+        }
+
+        responseMsgDiv.textContent = "";
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line);
+            if (event.type === "text") {
+              responseMsgDiv.textContent += event.text;
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else if (event.type === "error") {
+              throw new Error(event.detail);
+            }
+          }
+
+          if (done) break;
+        }
+      } catch (err) {
+        responseMsgDiv.className = "message system";
+        responseMsgDiv.textContent = `エラー: ${err.message}`;
+        console.error(err);
+      } finally {
+        chatSendBtn.disabled = false;
+        chatSendBtn.textContent = "送信";
+      }
+    }
+
+    chatSendBtn.addEventListener("click", sendChat);
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendChat();
+      }
+    });
+
+    // 初期化ロード
+    loadEngines();
+  </script>
+</body>
+</html>

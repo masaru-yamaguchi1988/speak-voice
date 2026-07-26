@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "speak-voice"
+dynamic = ["version"]
+description = "A unified cross-platform interface for various Japanese voice synthesis software"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Masaru", email = "masaru@example.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "openai>=1.0.0",
+    "google-genai>=0.1.0",
+]
+
+[project.scripts]
+speak-voice = "speak_voice.cli:main"
+speak-voice-clip = "speak_voice.cli:clip_main"
+speak-voice-web = "speak_voice.web.app:start"
+
+[tool.hatch.version]
+path = "src/speak_voice/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/speak_voice"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
