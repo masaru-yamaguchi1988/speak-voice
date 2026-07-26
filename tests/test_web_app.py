@@ -3,9 +3,32 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from speak_voice.web.app import app
+from speak_voice.web.app import app, get_ollama_models, ollama_http_error, ollama_root_url
 
 client = TestClient(app)
+
+
+def test_ollama_root_url_accepts_openai_compatible_base_url():
+    assert ollama_root_url("http://localhost:11434/v1/") == "http://localhost:11434"
+
+
+def test_get_ollama_models_returns_installed_model_names():
+    response = MagicMock()
+    response.json.return_value = {"models": [{"name": "gemma3:latest"}, {"name": "qwen3:8b"}]}
+    with patch("speak_voice.web.app.requests.get", return_value=response) as get:
+        models = get_ollama_models("http://localhost:11434/v1")
+
+    assert models == ["gemma3:latest", "qwen3:8b"]
+    get.assert_called_once_with("http://localhost:11434/api/tags", timeout=5)
+
+
+def test_ollama_http_error_includes_api_error_detail():
+    response = MagicMock(status_code=404, ok=False, text="")
+    response.json.return_value = {"error": "model 'qwen2.5' not found"}
+
+    error = ollama_http_error(response)
+
+    assert "model 'qwen2.5' not found" in str(error)
 
 
 def test_list_engines():

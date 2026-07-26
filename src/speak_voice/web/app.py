@@ -76,6 +76,32 @@ worker_thread = threading.Thread(target=speak_worker, daemon=True)
 worker_thread.start()
 
 
+def ollama_root_url(base_url: str) -> str:
+    """OpenAI互換URLからOllamaネイティブAPIのルートURLを得ます。"""
+    return base_url.rstrip("/").removesuffix("/v1")
+
+
+def get_ollama_models(base_url: str) -> list[str]:
+    """Ollamaにインストール済みのモデル名を取得します。"""
+    response = requests.get(f"{ollama_root_url(base_url)}/api/tags", timeout=5)
+    response.raise_for_status()
+    return [
+        item["name"]
+        for item in response.json().get("models", [])
+        if isinstance(item, dict) and item.get("name")
+    ]
+
+
+def ollama_http_error(response: requests.Response) -> RuntimeError:
+    """OllamaのJSONエラー本文を利用者向けメッセージに変換します。"""
+    try:
+        detail = response.json().get("error")
+    except (ValueError, AttributeError):
+        detail = None
+    message = detail or response.text.strip() or f"HTTP {response.status_code}"
+    return RuntimeError(f"Ollama APIエラー: {message}")
+
+
 class SpeakRequest(BaseModel):
     engine: str
     speaker: str
@@ -231,9 +257,17 @@ def chat_and_speak(req: ChatRequest):
             if provider in ("ollama", "local"):
                 # ローカルLLM (Ollama / LM Studio / Local OpenAI API)
                 base_url = req.base_url or "http://localhost:11434/v1"
-                model_name = req.model_name or (
-                    "qwen2.5" if provider == "ollama" else "local-model"
-                )
+                model_name = req.model_name
+                if provider == "ollama" and not model_name:
+                    installed_models = get_ollama_models(base_url)
+                    if not installed_models:
+                        raise RuntimeError(
+                            "Ollamaに利用可能なモデルがありません。"
+                            "`ollama pull <モデル名>`でモデルを取得してください。"
+                        )
+                    model_name = installed_models[0]
+                elif not model_name:
+                    model_name = "local-model"
                 api_key = req.api_key or "ollama"
 
                 # OpenAI SDKを用いたローカルOpenAI互換呼び出し
@@ -259,14 +293,15 @@ def chat_and_speak(req: ChatRequest):
                 except Exception as sdk_err:
                     print(f"[Local LLM SDK Error, fallback to REST API]: {sdk_err}")
                     # Ollama REST API (`/api/generate` または `/api/chat`) への直接フォールバック
-                    ollama_native_url = base_url.rstrip("/").removesuffix("/v1") + "/api/chat"
+                    ollama_native_url = f"{ollama_root_url(base_url)}/api/chat"
                     payload = {
                         "model": model_name,
                         "messages": [{"role": "user", "content": req.prompt}],
                         "stream": True,
                     }
                     resp = requests.post(ollama_native_url, json=payload, stream=True, timeout=60)
-                    resp.raise_for_status()
+                    if not resp.ok:
+                        raise ollama_http_error(resp)
 
                     import json
 

@@ -183,11 +183,11 @@
       const val = providerSelect.value;
       if (val === "ollama") {
         baseUrlWrapper.style.display = "block";
-        baseUrlInput.value = baseUrlInput.value || "http://localhost:11434/v1";
+        baseUrlInput.value = "http://localhost:11434/v1";
         keysGrid.style.display = "none";
       } else if (val === "local") {
         baseUrlWrapper.style.display = "block";
-        baseUrlInput.value = baseUrlInput.value || "http://localhost:1234/v1";
+        baseUrlInput.value = "http://localhost:1234/v1";
         keysGrid.style.display = "none";
       } else if (val === "mock") {
         baseUrlWrapper.style.display = "none";
