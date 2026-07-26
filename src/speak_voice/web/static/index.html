@@ -40,7 +40,15 @@
           <input type="password" id="openai-key" placeholder="OpenAI API Key">
           <input type="password" id="gemini-key" placeholder="Gemini API Key">
         </div>
-        <input type="text" id="model-name" placeholder="モデル名 (例: qwen2.5, gemma2, gpt-4o-mini)" style="margin-top: 0.5rem;">
+        <div class="model-picker">
+          <select id="model-name" aria-label="利用モデル">
+            <option value="">自動選択</option>
+          </select>
+          <button id="reload-models-btn" class="btn btn-secondary compact-btn" type="button">
+            再取得
+          </button>
+        </div>
+        <p id="model-status" class="model-status" aria-live="polite"></p>
       </div>
 
       <!-- 音声合成エンジン選択 -->
@@ -157,6 +165,7 @@
       <div class="chat-input-area">
         <input type="text" id="chat-input" placeholder="AIエージェントに何か言ってみてください...">
         <button id="chat-send-btn" class="btn btn-primary">送信</button>
+        <button id="chat-stop-btn" class="btn btn-danger" type="button" disabled>停止</button>
       </div>
     </div>
   </main>
@@ -177,9 +186,12 @@
     const bookmarkletLink = document.getElementById("bookmarklet-link");
     const copyBookmarkletBtn = document.getElementById("copy-bookmarklet-btn");
     const bookmarkletStatus = document.getElementById("bookmarklet-status");
+    const modelSelect = document.getElementById("model-name");
+    const modelStatus = document.getElementById("model-status");
+    const reloadModelsBtn = document.getElementById("reload-models-btn");
     
     // プロバイダー変更時の入力制御
-    providerSelect.addEventListener("change", () => {
+    providerSelect.addEventListener("change", async () => {
       const val = providerSelect.value;
       if (val === "ollama") {
         baseUrlWrapper.style.display = "block";
@@ -196,7 +208,51 @@
         baseUrlWrapper.style.display = "none";
         keysGrid.style.display = "grid";
       }
+      await loadModels();
     });
+
+    async function loadModels() {
+      const provider = providerSelect.value;
+      modelSelect.innerHTML = '<option value="">自動選択</option>';
+      if (!["ollama", "local"].includes(provider)) {
+        modelStatus.textContent = "ローカルLLM選択時に利用可能なモデルを表示します。";
+        reloadModelsBtn.disabled = true;
+        return;
+      }
+
+      reloadModelsBtn.disabled = true;
+      modelSelect.disabled = true;
+      modelStatus.textContent = "モデル一覧を取得中...";
+      try {
+        const query = new URLSearchParams({
+          provider,
+          base_url: baseUrlInput.value.trim()
+        });
+        const resp = await fetch(`/api/models?${query}`);
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.detail || "モデル一覧を取得できませんでした");
+        result.models.forEach(name => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          modelSelect.appendChild(option);
+        });
+        if (result.models.length > 0) {
+          modelSelect.value = result.models[0];
+          modelStatus.textContent = `${result.models.length}件のモデルを利用できます。`;
+        } else {
+          modelStatus.textContent = "利用可能なモデルがありません。";
+        }
+      } catch (err) {
+        modelStatus.textContent = `取得エラー: ${err.message}`;
+      } finally {
+        modelSelect.disabled = false;
+        reloadModelsBtn.disabled = false;
+      }
+    }
+
+    reloadModelsBtn.addEventListener("click", loadModels);
+    baseUrlInput.addEventListener("change", loadModels);
 
     // スライダー群
     const sliders = ["speed", "pitch", "intonation", "volume"];
@@ -370,6 +426,14 @@
     // チャット送信
     const chatInput = document.getElementById("chat-input");
     const chatSendBtn = document.getElementById("chat-send-btn");
+    const chatStopBtn = document.getElementById("chat-stop-btn");
+    let activeChatController = null;
+
+    chatStopBtn.addEventListener("click", () => {
+      if (activeChatController) {
+        activeChatController.abort();
+      }
+    });
 
     async function sendChat() {
       const prompt = chatInput.value.trim();
@@ -384,7 +448,7 @@
       const selectedProvider = providerSelect.value;
       const openaiKey = document.getElementById("openai-key").value.trim();
       const geminiKey = document.getElementById("gemini-key").value.trim();
-      const modelName = document.getElementById("model-name").value.trim() || null;
+      const modelName = modelSelect.value || null;
       const baseUrl = baseUrlInput.value.trim() || null;
       
       let apiProvider = selectedProvider;
@@ -412,7 +476,9 @@
 
       // ローディング/ステータス表示
       chatSendBtn.disabled = true;
+      chatStopBtn.disabled = false;
       chatSendBtn.innerHTML = '<span class="pulse-loader"></span>';
+      activeChatController = new AbortController();
       
       // AI返答用プレースホルダーメッセージを作成
       const responseMsgDiv = appendMessage("assistant", "考え中...");
@@ -421,6 +487,7 @@
         const resp = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: activeChatController.signal,
           body: JSON.stringify({
             ...params,
             prompt: prompt,
@@ -465,11 +532,17 @@
           if (done) break;
         }
       } catch (err) {
-        responseMsgDiv.className = "message system";
-        responseMsgDiv.textContent = `エラー: ${err.message}`;
-        console.error(err);
+        if (err.name === "AbortError") {
+          responseMsgDiv.textContent += "\n（回答と音声再生を停止しました）";
+        } else {
+          responseMsgDiv.className = "message system";
+          responseMsgDiv.textContent = `エラー: ${err.message}`;
+          console.error(err);
+        }
       } finally {
+        activeChatController = null;
         chatSendBtn.disabled = false;
+        chatStopBtn.disabled = true;
         chatSendBtn.textContent = "送信";
       }
     }
@@ -484,6 +557,7 @@
 
     // 初期化ロード
     loadEngines();
+    loadModels();
   </script>
 </body>
 </html>

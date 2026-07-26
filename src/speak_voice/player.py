@@ -1,10 +1,40 @@
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import wave
 
 
-def play_wav(wav_bytes: bytes) -> bool:
+def _run_player(command: list[str], stop_event: threading.Event | None, **kwargs) -> bool:
+    """外部プレイヤーを実行し、停止要求時はプロセスを終了します。"""
+    process = subprocess.Popen(command, **kwargs)
+    while process.poll() is None:
+        if stop_event and stop_event.is_set():
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            return False
+        time.sleep(0.05)
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, command)
+    return True
+
+
+def _wav_duration(wav_bytes: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
+            return wav.getnframes() / wav.getframerate()
+    except (wave.Error, ZeroDivisionError):
+        return 60.0
+
+
+def play_wav(wav_bytes: bytes, stop_event: threading.Event | None = None) -> bool:
     """WAV形式の音声バイナリデータをクロスプラットフォームで再生します。
 
     pyaudio や sounddevice などの重いC言語依存の外部ライブラリを避け、
@@ -19,19 +49,25 @@ def play_wav(wav_bytes: bytes) -> bool:
     戻り値:
         bool: 再生に成功した場合は True、失敗した場合は False。
     """
-    if not wav_bytes:
+    if not wav_bytes or (stop_event and stop_event.is_set()):
         return False
 
-    # Windowsの場合は、標準ライブラリの winsound を使用してメモリから直接再生を試みる
+    # Windowsでは非同期再生にして停止要求を監視する
     if sys.platform == "win32":
         try:
             import winsound
 
-            # winsound.PlaySound はファイルパスまたはバイト列（SND_MEMORYフラグ使用時）を受け取ることができます
-            winsound.PlaySound(wav_bytes, winsound.SND_MEMORY)
+            flags = winsound.SND_MEMORY
+            if stop_event:
+                flags |= winsound.SND_ASYNC
+            winsound.PlaySound(wav_bytes, flags)
+            if stop_event:
+                cancelled = stop_event.wait(_wav_duration(wav_bytes))
+                if cancelled:
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                    return False
             return True
         except Exception:
-            # winsoundのメモリ再生に失敗した場合は、一時ファイル経由の再生にフォールバックします
             pass
 
     # 一時ファイルを作成して再生する標準的なアプローチ
@@ -41,26 +77,28 @@ def play_wav(wav_bytes: bytes) -> bool:
             f.write(wav_bytes)
 
         if sys.platform == "darwin":
-            # macOS: 標準搭載の afplay コマンドを呼び出す
-            subprocess.run(["afplay", temp_path], check=True)
-            return True
+            return _run_player(["afplay", temp_path], stop_event)
         elif sys.platform == "win32":
-            # winsoundのメモリ再生が何らかの理由で動かない場合のファイル再生フォールバック
             import winsound
 
-            winsound.PlaySound(temp_path, winsound.SND_FILENAME)
+            flags = winsound.SND_FILENAME | (winsound.SND_ASYNC if stop_event else 0)
+            winsound.PlaySound(temp_path, flags)
+            if stop_event:
+                cancelled = stop_event.wait(_wav_duration(wav_bytes))
+                if cancelled:
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                    return False
             return True
         else:
             # Linuxなど: 代表的なCLIプレイヤー（aplay, paplay, play）を順に試す
             for player in ["aplay", "paplay", "play"]:
                 try:
-                    subprocess.run(
+                    return _run_player(
                         [player, temp_path],
-                        check=True,
+                        stop_event,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-                    return True
                 except (subprocess.SubprocessError, FileNotFoundError):
                     continue
 

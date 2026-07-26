@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import queue
@@ -7,7 +8,7 @@ from typing import Optional
 
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -92,6 +93,17 @@ def get_ollama_models(base_url: str) -> list[str]:
     ]
 
 
+def get_openai_compatible_models(base_url: str) -> list[str]:
+    """OpenAI互換APIから利用可能なモデル名を取得します。"""
+    response = requests.get(f"{base_url.rstrip('/')}/models", timeout=5)
+    response.raise_for_status()
+    return [
+        item["id"]
+        for item in response.json().get("data", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+
+
 def ollama_http_error(response: requests.Response) -> RuntimeError:
     """OllamaのJSONエラー本文を利用者向けメッセージに変換します。"""
     try:
@@ -156,6 +168,26 @@ def list_engines():
     return result
 
 
+@app.get("/api/models")
+def list_models(provider: str, base_url: Optional[str] = None):
+    """ローカルLLMで利用可能なモデル一覧を返します。"""
+    try:
+        if provider == "ollama":
+            url = base_url or "http://localhost:11434/v1"
+            models = get_ollama_models(url)
+        elif provider == "local":
+            url = base_url or "http://localhost:1234/v1"
+            models = get_openai_compatible_models(url)
+        else:
+            return {"models": []}
+        return {"models": models}
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"モデル一覧を取得できませんでした: {error}",
+        ) from error
+
+
 @app.get("/api/speakers")
 def list_speakers(engine: str = Query(..., description="Engine key (e.g. voicevox)")):
     """指定された音声合成エンジンの利用可能な話者/キャラクター一覧を返します。"""
@@ -208,7 +240,7 @@ def hook_speak(req: SpeakRequest):
 
 
 @app.post("/api/chat")
-def chat_and_speak(req: ChatRequest):
+def chat_and_speak(req: ChatRequest, request: Request):
     """AI応答をNDJSONで逐次返しながら、文単位で音声再生します。"""
     engine_key = req.engine.lower()
     if engine_key not in ENGINES:
@@ -246,8 +278,12 @@ def chat_and_speak(req: ChatRequest):
 
     # API連携の実行
     stream_queue: queue.Queue = queue.Queue()
+    disconnected = threading.Event()
 
     def emit_text(text: str):
+        if disconnected.is_set():
+            bridge.cancel()
+            raise RuntimeError("ブラウザとの接続が切断されたため生成を停止しました。")
         stream_queue.put({"type": "text", "text": text})
 
     def run_bridge():
@@ -480,14 +516,26 @@ def chat_and_speak(req: ChatRequest):
         finally:
             stream_queue.put(None)
 
-    def event_stream():
+    async def event_stream():
         thread = threading.Thread(target=run_and_report, daemon=True)
         thread.start()
-        while True:
-            event = stream_queue.get()
-            if event is None:
-                break
-            yield json.dumps(event, ensure_ascii=False) + "\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    disconnected.set()
+                    bridge.cancel()
+                    break
+                try:
+                    event = stream_queue.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.05)
+                    continue
+                if event is None:
+                    break
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        finally:
+            disconnected.set()
+            bridge.cancel()
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 

@@ -39,6 +39,23 @@ def test_list_engines():
     assert any("key" in item for item in data)
 
 
+def test_list_ollama_models_endpoint():
+    with patch(
+        "speak_voice.web.app.get_ollama_models",
+        return_value=["gemma3:latest", "qwen3:8b"],
+    ):
+        response = client.get(
+            "/api/models",
+            params={
+                "provider": "ollama",
+                "base_url": "http://localhost:11434/v1",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"models": ["gemma3:latest", "qwen3:8b"]}
+
+
 def test_hook_speak_validation():
     # 不正なエンジンキーでのテスト
     payload = {

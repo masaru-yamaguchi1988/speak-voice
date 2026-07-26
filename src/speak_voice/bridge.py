@@ -64,6 +64,7 @@ class VoiceAgentBridge:
         self.running = False
         self._errors: list[Exception] = []
         self._error_lock = threading.Lock()
+        self._cancel_event = threading.Event()
 
     def start(self):
         """バックグラウンド再生スレッドを開始します。"""
@@ -71,16 +72,30 @@ class VoiceAgentBridge:
             return
         with self._error_lock:
             self._errors.clear()
+        self._cancel_event.clear()
         self.running = True
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
 
     def stop(self):
         """再生スレッドを停止し、処理を終了します。"""
+        self.cancel()
         self.running = False
         self.queue.put(None)  # 終了シグナル
         if self.thread:
             self.thread.join()
+
+    def cancel(self):
+        """現在の再生を止め、未再生の文章をキューから破棄します。"""
+        self._cancel_event.set()
+        while True:
+            try:
+                item = self.queue.get_nowait()
+                self.queue.task_done()
+                if item is None:
+                    break
+            except queue.Empty:
+                break
 
     def wait_until_done(self):
         """キュー内のすべてのテキストの音声合成・再生が完了するまでブロック待機します。"""
@@ -109,17 +124,20 @@ class VoiceAgentBridge:
 
         splitter = SentenceSplitter()
         for chunk in text_generator:
+            if self._cancel_event.is_set():
+                break
             sentences = splitter.append(chunk)
             for sentence in sentences:
                 self.speak(sentence)
 
         # 最後にバッファに残ったテキストをフラッシュして発話
-        for sentence in splitter.flush():
-            self.speak(sentence)
+        if not self._cancel_event.is_set():
+            for sentence in splitter.flush():
+                self.speak(sentence)
 
     def _worker(self):
         """バックグラウンドでキューを監視し、合成と再生を行うワーカースレッド。"""
-        while self.running:
+        while True:
             try:
                 text = self.queue.get(timeout=0.5)
                 if text is None:  # 終了シグナル
@@ -128,11 +146,15 @@ class VoiceAgentBridge:
 
                 try:
                     # 音声の合成
+                    if self._cancel_event.is_set():
+                        continue
                     wav_bytes = self.engine.synthesize_wav(
                         text=text, speaker_id=self.speaker_id, **self.synth_params
                     )
                     # 音声の再生
-                    if not play_wav(wav_bytes):
+                    if not play_wav(wav_bytes, stop_event=self._cancel_event):
+                        if self._cancel_event.is_set():
+                            continue
                         raise RuntimeError("音声プレイヤーが再生に失敗しました。")
                 except Exception as e:
                     import sys

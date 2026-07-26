@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,3 +39,25 @@ def test_bridge_raises_when_audio_player_returns_false():
                 bridge.wait_until_done()
         finally:
             bridge.stop()
+
+
+def test_bridge_cancel_stops_current_audio_and_discards_queue():
+    engine = MagicMock()
+    engine.synthesize_wav.return_value = b"wav"
+    bridge = VoiceAgentBridge(engine, speaker_id="1")
+    playback_started = threading.Event()
+
+    def cancellable_playback(wav_bytes, stop_event):
+        playback_started.set()
+        stop_event.wait(1)
+        return False
+
+    with patch("speak_voice.bridge.play_wav", side_effect=cancellable_playback):
+        bridge.speak("最初の文章")
+        bridge.speak("未再生の文章")
+        assert playback_started.wait(1)
+        bridge.cancel()
+        bridge.wait_until_done()
+        bridge.stop()
+
+    engine.synthesize_wav.assert_called_once()
