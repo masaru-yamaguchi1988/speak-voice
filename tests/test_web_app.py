@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from speak_voice.engines import VoicepeakEngine
+from speak_voice.voisona_config import VoiSonaConfig
 from speak_voice.web.app import app, get_ollama_models, ollama_http_error, ollama_root_url
 
 client = TestClient(app)
@@ -93,6 +94,88 @@ def test_voicevox_engine_settings_match_supported_ranges():
     assert pitch["min"] == -0.15
     assert pitch["max"] == 0.15
     assert data["emotions"] == []
+
+
+def test_voisona_engine_settings_match_global_parameters():
+    response = client.get("/api/engine-settings", params={"engine": "voisona"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [parameter["id"] for parameter in data["parameters"]] == [
+        "speed",
+        "pitch",
+        "intonation",
+        "volume",
+    ]
+    volume = next(item for item in data["parameters"] if item["id"] == "volume")
+    assert volume["default"] == 0.0
+
+
+def test_voisona_config_update_tests_connection_without_exposing_password():
+    existing = VoiSonaConfig()
+    saved = VoiSonaConfig(
+        username="user@example.com",
+        password="api-password",
+        source="session",
+    )
+    with (
+        patch("speak_voice.web.app.get_voisona_config", return_value=existing),
+        patch(
+            "speak_voice.web.app.VoiSonaEngine.test_connection",
+            return_value=2,
+        ),
+        patch(
+            "speak_voice.web.app.set_voisona_config",
+            return_value=saved,
+        ) as save,
+    ):
+        response = client.put(
+            "/api/engine-config/voisona",
+            json={
+                "base_url": "http://127.0.0.1:32766/api/talk/v1",
+                "username": "user@example.com",
+                "password": "api-password",
+                "remember": False,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["voice_count"] == 2
+    assert response.json()["password_configured"] is True
+    assert "password" not in response.json()
+    save.assert_called_once()
+
+
+def test_voisona_config_rejects_external_api_url():
+    response = client.post(
+        "/api/engine-config/voisona/test",
+        json={
+            "base_url": "https://example.com/api/talk/v1",
+            "username": "user@example.com",
+            "password": "api-password",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "localhost" in response.json()["detail"]
+
+
+def test_voisona_config_rejects_cross_origin_access():
+    response = client.get(
+        "/api/engine-config/voisona",
+        headers={"Origin": "https://example.com"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_web_console_contains_voisona_connection_form():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="voisona-config-card"' in response.text
+    assert "この端末の資格情報ストアに保存する" in response.text
+    assert "/api/engine-config/voisona/test" in response.text
 
 
 def test_voicepeak_engine_settings_include_speaker_emotions():

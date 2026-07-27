@@ -8,7 +8,6 @@ import requests
 
 from speak_voice.base import BaseEngine
 from speak_voice.engines import (
-    AIVoiceEngine,
     CoeiroinkEngine,
     VoicepeakEngine,
     VoicevoxEngine,
@@ -21,7 +20,6 @@ ENGINES: Dict[str, Type[BaseEngine]] = {
     "voicevox": VoicevoxEngine,
     "coeiroink": CoeiroinkEngine,
     "voicepeak": VoicepeakEngine,
-    "aivoice": AIVoiceEngine,
     "voisona": VoiSonaEngine,
 }
 

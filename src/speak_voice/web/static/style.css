@@ -166,6 +166,67 @@ select:focus, input[type="text"]:focus, input[type="password"]:focus, textarea:f
   font-size: 0.78rem;
 }
 
+.engine-config-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.engine-config-card[hidden] {
+  display: none;
+}
+
+.engine-config-heading,
+.engine-config-actions,
+.remember-setting {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.engine-config-heading {
+  justify-content: space-between;
+}
+
+.engine-config-actions {
+  flex-wrap: wrap;
+}
+
+.remember-setting {
+  width: fit-content;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.remember-setting input {
+  width: auto;
+}
+
+.connection-badge {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.connection-badge.connected {
+  border-color: var(--success-color);
+  color: var(--success-color);
+}
+
+.engine-config-note {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
 /* Sliders Tuning Grid */
 .sliders-grid {
   display: grid;

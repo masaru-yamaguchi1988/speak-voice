@@ -59,6 +59,53 @@
         </select>
       </div>
 
+      <!-- VoiSona Talk REST API 接続設定 -->
+      <div id="voisona-config-card" class="engine-config-card" hidden>
+        <div class="engine-config-heading">
+          <label>VoiSona Talk API接続</label>
+          <span id="voisona-connection-badge" class="connection-badge">未設定</span>
+        </div>
+        <input
+          type="text"
+          id="voisona-api-url"
+          value="http://127.0.0.1:32766/api/talk/v1"
+          placeholder="VoiSona Talk API URL"
+          autocomplete="off"
+        >
+        <input
+          type="text"
+          id="voisona-api-user"
+          placeholder="VoiSona Talkに表示されたユーザー名"
+          autocomplete="username"
+        >
+        <input
+          type="password"
+          id="voisona-api-password"
+          placeholder="API用パスワード"
+          autocomplete="current-password"
+        >
+        <p id="voisona-password-hint" class="model-status"></p>
+        <label class="remember-setting">
+          <input type="checkbox" id="voisona-remember">
+          <span>この端末の資格情報ストアに保存する</span>
+        </label>
+        <div class="engine-config-actions">
+          <button id="voisona-test-btn" class="btn btn-secondary compact-btn" type="button">
+            接続テスト
+          </button>
+          <button id="voisona-connect-btn" class="btn btn-primary compact-btn" type="button">
+            接続して使用
+          </button>
+          <button id="voisona-clear-btn" class="btn btn-danger compact-btn" type="button">
+            設定を消去
+          </button>
+        </div>
+        <p id="voisona-config-status" class="model-status" aria-live="polite"></p>
+        <p class="engine-config-note">
+          パスワードは標準ではサーバーのメモリだけに保持されます。端末へ保存する場合はOSの資格情報ストアを使用します。
+        </p>
+      </div>
+
       <!-- 話者・キャラクター選択 -->
       <div class="form-group">
         <label for="speaker-select">話者 / キャラクター</label>
@@ -162,6 +209,17 @@
     const modelSelect = document.getElementById("model-name");
     const modelStatus = document.getElementById("model-status");
     const reloadModelsBtn = document.getElementById("reload-models-btn");
+    const voisonaConfigCard = document.getElementById("voisona-config-card");
+    const voisonaApiUrl = document.getElementById("voisona-api-url");
+    const voisonaApiUser = document.getElementById("voisona-api-user");
+    const voisonaApiPassword = document.getElementById("voisona-api-password");
+    const voisonaPasswordHint = document.getElementById("voisona-password-hint");
+    const voisonaRemember = document.getElementById("voisona-remember");
+    const voisonaTestBtn = document.getElementById("voisona-test-btn");
+    const voisonaConnectBtn = document.getElementById("voisona-connect-btn");
+    const voisonaClearBtn = document.getElementById("voisona-clear-btn");
+    const voisonaConfigStatus = document.getElementById("voisona-config-status");
+    const voisonaConnectionBadge = document.getElementById("voisona-connection-badge");
     
     // プロバイダー変更時の入力制御
     providerSelect.addEventListener("change", async () => {
@@ -226,6 +284,107 @@
 
     reloadModelsBtn.addEventListener("click", loadModels);
     baseUrlInput.addEventListener("change", loadModels);
+
+    function setVoiSonaConnectionState(connected, label) {
+      voisonaConnectionBadge.textContent = label;
+      voisonaConnectionBadge.classList.toggle("connected", connected);
+    }
+
+    async function loadVoiSonaConfig() {
+      try {
+        const resp = await fetch("/api/engine-config/voisona");
+        const config = await resp.json();
+        if (!resp.ok) throw new Error(config.detail || "接続設定を取得できませんでした");
+        voisonaApiUrl.value = config.base_url;
+        voisonaApiUser.value = config.username;
+        voisonaApiPassword.value = "";
+        voisonaPasswordHint.textContent = config.password_configured
+          ? "保存済みのパスワードがあります。変更しない場合は空欄のままで構いません。"
+          : "VoiSona Talkで設定したAPI用パスワードを入力してください。";
+        voisonaRemember.checked = config.storage === "keyring";
+        setVoiSonaConnectionState(
+          config.connected,
+          config.connected ? "接続済み" : (config.password_configured ? "接続エラー" : "未設定")
+        );
+        voisonaConfigStatus.textContent = config.storage === "environment"
+          ? "現在は環境変数の設定を使用しています。"
+          : config.storage === "keyring"
+            ? "OSの資格情報ストアに保存された設定を使用しています。"
+            : config.storage === "session"
+              ? "このサーバーを終了するまでメモリ内の設定を使用します。"
+              : "";
+      } catch (err) {
+        setVoiSonaConnectionState(false, "取得エラー");
+        voisonaConfigStatus.textContent = `設定取得エラー: ${err.message}`;
+      }
+    }
+
+    function voisonaConfigPayload() {
+      return {
+        base_url: voisonaApiUrl.value.trim(),
+        username: voisonaApiUser.value.trim(),
+        password: voisonaApiPassword.value || null,
+        remember: voisonaRemember.checked
+      };
+    }
+
+    async function submitVoiSonaConfig(endpoint, method, button) {
+      const buttons = [voisonaTestBtn, voisonaConnectBtn, voisonaClearBtn];
+      buttons.forEach(item => item.disabled = true);
+      const originalText = button.textContent;
+      button.textContent = "接続中...";
+      voisonaConfigStatus.textContent = "";
+      try {
+        const resp = await fetch(endpoint, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(voisonaConfigPayload())
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.detail || "VoiSona Talkへ接続できませんでした");
+        setVoiSonaConnectionState(true, "接続済み");
+        voisonaConfigStatus.textContent =
+          `接続成功：${result.voice_count}件のボイスライブラリを利用できます。`;
+        if (method === "PUT") {
+          voisonaApiPassword.value = "";
+          voisonaPasswordHint.textContent =
+            "設定済みのパスワードがあります。変更しない場合は空欄のままで構いません。";
+          await loadSpeakers("voisona");
+          await loadEngineSettings();
+        }
+      } catch (err) {
+        setVoiSonaConnectionState(false, "接続エラー");
+        voisonaConfigStatus.textContent = `接続エラー: ${err.message}`;
+      } finally {
+        button.textContent = originalText;
+        buttons.forEach(item => item.disabled = false);
+      }
+    }
+
+    voisonaTestBtn.addEventListener("click", () =>
+      submitVoiSonaConfig("/api/engine-config/voisona/test", "POST", voisonaTestBtn)
+    );
+    voisonaConnectBtn.addEventListener("click", () =>
+      submitVoiSonaConfig("/api/engine-config/voisona", "PUT", voisonaConnectBtn)
+    );
+    voisonaClearBtn.addEventListener("click", async () => {
+      if (!window.confirm("VoiSona Talkのメモリ内設定と保存済み資格情報を消去しますか？")) return;
+      try {
+        const resp = await fetch("/api/engine-config/voisona", { method: "DELETE" });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.detail || "設定を消去できませんでした");
+        await loadVoiSonaConfig();
+        await loadSpeakers("voisona");
+      } catch (err) {
+        voisonaConfigStatus.textContent = `消去エラー: ${err.message}`;
+      }
+    });
+
+    async function updateEngineConfigVisibility() {
+      const isVoiSona = engineSelect.value === "voisona";
+      voisonaConfigCard.hidden = !isVoiSona;
+      if (isVoiSona) await loadVoiSonaConfig();
+    }
 
     const slidersGrid = document.getElementById("sliders-grid");
     const parameterStatus = document.getElementById("parameter-status");
@@ -323,6 +482,7 @@
         if (engines.length > 0) {
           await loadSpeakers(engines[0].key);
         }
+        await updateEngineConfigVisibility();
         updateBookmarklet();
         await loadEngineSettings();
         connectionStatus.textContent = "API 接続完了";
@@ -393,6 +553,7 @@
 
     // エンジン切り替えイベント
     engineSelect.addEventListener("change", async (e) => {
+      await updateEngineConfigVisibility();
       await loadSpeakers(e.target.value);
       await loadEngineSettings();
     });
