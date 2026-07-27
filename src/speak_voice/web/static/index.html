@@ -127,9 +127,17 @@
 
       <!-- チャット入力エリア -->
       <div class="chat-input-area">
-        <input type="text" id="chat-input" placeholder="AIエージェントに何か言ってみてください...">
-        <button id="chat-send-btn" class="btn btn-primary">送信</button>
-        <button id="chat-stop-btn" class="btn btn-danger" type="button" disabled>停止</button>
+        <textarea
+          id="chat-input"
+          rows="4"
+          placeholder="AIエージェントに何か言ってみてください..."
+          aria-describedby="chat-input-hint"
+        ></textarea>
+        <p id="chat-input-hint" class="chat-input-hint">Enterで改行・Shift + Enterで送信</p>
+        <div class="chat-input-actions">
+          <button id="chat-send-btn" class="btn btn-primary">送信</button>
+          <button id="chat-stop-btn" class="btn btn-danger" type="button" disabled>停止</button>
+        </div>
       </div>
     </div>
   </main>
@@ -360,7 +368,9 @@
             }
             const opt = document.createElement("option");
             opt.value = sp.id;
-            opt.textContent = sp.style_name;
+            // optgroupを閉じた状態でも、現在のキャラクターとスタイルが
+            // どちらも分かるように完全な表示名を持たせる。
+            opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;
             groups.get(sp.speaker_name).appendChild(opt);
           });
           speakerStatus.textContent = `${groups.size}名・${currentSpeakers.length}スタイルを利用できます。`;
@@ -494,6 +504,11 @@
     const chatStopBtn = document.getElementById("chat-stop-btn");
     let activeChatController = null;
 
+    function resizeChatInput() {
+      chatInput.style.height = "auto";
+      chatInput.style.height = `${Math.min(chatInput.scrollHeight, 280)}px`;
+    }
+
     chatStopBtn.addEventListener("click", () => {
       if (activeChatController) {
         activeChatController.abort();
@@ -538,6 +553,7 @@
       // ユーザーメッセージを追加
       appendMessage("user", prompt);
       chatInput.value = "";
+      resizeChatInput();
 
       // ローディング/ステータス表示
       chatSendBtn.disabled = true;
@@ -613,8 +629,9 @@
     }
 
     chatSendBtn.addEventListener("click", sendChat);
+    chatInput.addEventListener("input", resizeChatInput);
     chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && e.shiftKey && !e.isComposing) {
         e.preventDefault();
         sendChat();
       }

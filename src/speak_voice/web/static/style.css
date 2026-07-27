@@ -382,9 +382,30 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .chat-input-area {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem 0.8rem;
+  margin-top: auto;
+}
+
+#chat-input {
+  grid-column: 1 / -1;
+  min-height: 7rem;
+  max-height: 280px;
+  resize: vertical;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+
+.chat-input-hint {
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.chat-input-actions {
   display: flex;
   gap: 0.8rem;
-  margin-top: auto;
 }
 
 /* Loading animations */

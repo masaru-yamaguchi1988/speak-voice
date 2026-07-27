@@ -93,6 +93,22 @@ def test_voicepeak_engine_settings_include_speaker_emotions():
     assert response.json()["emotions"] == ["happy", "sad"]
 
 
+def test_grouped_speaker_option_includes_character_and_style():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;' in response.text
+
+
+def test_chat_input_supports_multiline_and_shift_enter_send():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<textarea\n          id="chat-input"' in response.text
+    assert "Enterで改行・Shift + Enterで送信" in response.text
+    assert 'e.key === "Enter" && e.shiftKey && !e.isComposing' in response.text
+
+
 def test_hook_speak_validation():
     # 不正なエンジンキーでのテスト
     payload = {
