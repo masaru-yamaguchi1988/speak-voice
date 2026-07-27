@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import requests
-import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -620,6 +619,10 @@ def chat_and_speak(req: ChatRequest, request: Request):
 
 def start():
     """Webサーバーを起動するためのエントリポイント"""
+    # ASGIアプリのインポートやテストではuvicornを必要としない。
+    # 実際にWebサーバーを起動するときだけオプション依存を読み込む。
+    import uvicorn
+
     uvicorn.run("speak_voice.web.app:app", host="127.0.0.1", port=8000, reload=True)
 
 
