@@ -18,6 +18,9 @@ class Speaker:
 class BaseEngine(ABC):
     """すべての音声合成エンジンを統括する抽象基底クラス。"""
 
+    # 1回の合成で受け付けられる文字数。制限がないエンジンはNone。
+    max_text_length: Optional[int] = None
+
     @property
     @abstractmethod
     def engine_name(self) -> str:

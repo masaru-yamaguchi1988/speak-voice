@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from typing import List, Optional
 
 from speak_voice.base import BaseEngine, Speaker
@@ -9,6 +11,14 @@ from speak_voice.base import BaseEngine, Speaker
 
 class VoicepeakEngine(BaseEngine):
     """Voicepeak engine wrapper running the official CLI executable."""
+
+    # 公式CLIのセリフ入力上限。
+    max_text_length = 140
+
+    # VOICEPEAK CLIは複数プロセスから同時に呼ぶと不安定になるため、
+    # エンジンインスタンスをまたいですべてのCLI操作を直列化する。
+    _cli_lock = threading.Lock()
+    _synthesis_attempts = 3
 
     def __init__(self, executable_path: Optional[str] = None):
         if executable_path:
@@ -34,12 +44,13 @@ class VoicepeakEngine(BaseEngine):
     def is_available(self) -> bool:
         try:
             # Quick run to check if executable runs
-            result = subprocess.run(
-                [self.executable_path, "--help"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=1.0,
-            )
+            with self._cli_lock:
+                result = subprocess.run(
+                    [self.executable_path, "--help"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=1.0,
+                )
             return result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
@@ -49,13 +60,14 @@ class VoicepeakEngine(BaseEngine):
             return []
 
         try:
-            result = subprocess.run(
-                [self.executable_path, "--list-narrator"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=3.0,
-            )
+            with self._cli_lock:
+                result = subprocess.run(
+                    [self.executable_path, "--list-narrator"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=3.0,
+                )
             # Example output:
             # Male 1
             # Female 1
@@ -78,13 +90,14 @@ class VoicepeakEngine(BaseEngine):
     def get_emotions(self, speaker_id: str) -> List[str]:
         """指定ナレーターで利用可能な感情名を取得します。"""
         try:
-            result = subprocess.run(
-                [self.executable_path, "--list-emotion", speaker_id],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=3.0,
-            )
+            with self._cli_lock:
+                result = subprocess.run(
+                    [self.executable_path, "--list-emotion", speaker_id],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=3.0,
+                )
             emotions = []
             for line in result.stdout.splitlines():
                 name = line.strip()
@@ -139,12 +152,40 @@ class VoicepeakEngine(BaseEngine):
             elif "emotion" in kwargs:
                 cmd.extend(["--emotion", kwargs["emotion"]])
 
-            subprocess.run(
-                cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20.0
-            )
+            # 長文では20秒を超える場合があるため、文字数に応じて待機時間を延長する。
+            timeout = max(30.0, min(120.0, len(text) * 0.4))
+            last_error: Optional[Exception] = None
 
-            with open(temp_path, "rb") as f:
-                return f.read()
+            with self._cli_lock:
+                for attempt in range(self._synthesis_attempts):
+                    try:
+                        subprocess.run(
+                            cmd,
+                            check=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            timeout=timeout,
+                        )
+
+                        with open(temp_path, "rb") as f:
+                            wav_bytes = f.read()
+                        if not wav_bytes:
+                            raise RuntimeError("VOICEPEAKが空の音声ファイルを返しました。")
+                        return wav_bytes
+                    except (
+                        subprocess.CalledProcessError,
+                        subprocess.TimeoutExpired,
+                        OSError,
+                        RuntimeError,
+                    ) as error:
+                        last_error = error
+                        if attempt + 1 < self._synthesis_attempts:
+                            # CLIプロセス終了直後の再起動を避けるため少しずつ待機を延ばす。
+                            time.sleep(0.4 * (attempt + 1))
+
+            raise RuntimeError(
+                f"VOICEPEAKの音声生成が{self._synthesis_attempts}回連続で失敗しました。"
+            ) from last_error
 
         finally:
             try:

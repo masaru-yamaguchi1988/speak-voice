@@ -115,7 +115,12 @@ class VoiceAgentBridge:
         # 空文字でなければキューへ追加
         clean_text = text.strip()
         if clean_text:
-            self.queue.put(clean_text)
+            max_length = getattr(self.engine, "max_text_length", None)
+            if isinstance(max_length, int) and max_length > 0:
+                for start in range(0, len(clean_text), max_length):
+                    self.queue.put(clean_text[start : start + max_length])
+            else:
+                self.queue.put(clean_text)
 
     def speak_stream(self, text_generator: Generator[str, None, None]):
         """ジェネレータ（ストリーミング出力）から随時テキストを受け取り、文単位で切り出してキューに追加します。"""
