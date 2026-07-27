@@ -61,3 +61,20 @@ def test_bridge_cancel_stops_current_audio_and_discards_queue():
         bridge.stop()
 
     engine.synthesize_wav.assert_called_once()
+
+
+def test_bridge_splits_text_to_engine_character_limit():
+    engine = MagicMock()
+    engine.max_text_length = 5
+    engine.synthesize_wav.return_value = b"wav"
+    bridge = VoiceAgentBridge(engine, speaker_id="1")
+
+    with patch("speak_voice.bridge.play_wav", return_value=True):
+        try:
+            bridge.speak("12345678901")
+            bridge.wait_until_done()
+        finally:
+            bridge.stop()
+
+    texts = [call.kwargs["text"] for call in engine.synthesize_wav.call_args_list]
+    assert texts == ["12345", "67890", "1"]

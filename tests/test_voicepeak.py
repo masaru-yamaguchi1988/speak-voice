@@ -72,3 +72,41 @@ def test_voicepeak_synthesize():
         assert "120" in called_args  # 1.2 * 100
         assert "--pitch" in called_args
         assert "-50" in called_args  # -0.5 * 100
+
+
+def test_voicepeak_synthesize_retries_temporary_cli_failure():
+    engine = VoicepeakEngine(executable_path="dummy-voicepeak")
+
+    with (
+        patch(
+            "subprocess.run",
+            side_effect=[subprocess.CalledProcessError(1, ["dummy-voicepeak"]), MagicMock()],
+        ) as mock_run,
+        patch("builtins.open", create=True) as mock_open,
+        patch("os.remove"),
+        patch("time.sleep") as mock_sleep,
+    ):
+        mock_open.return_value.__enter__.return_value.read.return_value = b"voicepeak-wav-bytes"
+
+        wav = engine.synthesize_wav("こんにちは", speaker_id="Male 1")
+
+    assert wav == b"voicepeak-wav-bytes"
+    assert mock_run.call_count == 2
+    mock_sleep.assert_called_once_with(0.4)
+
+
+def test_voicepeak_synthesize_reports_repeated_cli_failure():
+    engine = VoicepeakEngine(executable_path="dummy-voicepeak")
+
+    with (
+        patch(
+            "subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, ["dummy-voicepeak"]),
+        ) as mock_run,
+        patch("os.remove"),
+        patch("time.sleep"),
+    ):
+        with pytest.raises(RuntimeError, match="3回連続で失敗"):
+            engine.synthesize_wav("こんにちは", speaker_id="Male 1")
+
+    assert mock_run.call_count == 3

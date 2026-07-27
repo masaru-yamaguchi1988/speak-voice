@@ -97,7 +97,7 @@ def test_grouped_speaker_option_includes_character_and_style():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert 'opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;' in response.text
+    assert "opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;" in response.text
 
 
 def test_chat_input_supports_multiline_and_shift_enter_send():
