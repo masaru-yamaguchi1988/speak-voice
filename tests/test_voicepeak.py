@@ -9,17 +9,35 @@ from speak_voice.engines.voicepeak import VoicepeakEngine
 def test_voicepeak_is_available():
     engine = VoicepeakEngine(executable_path="dummy-voicepeak")
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock()
+        mock_run.return_value = MagicMock(returncode=0)
         assert engine.is_available() is True
 
         mock_run.side_effect = FileNotFoundError()
         assert engine.is_available() is False
 
 
+def test_voicepeak_get_emotions():
+    engine = VoicepeakEngine(executable_path="dummy-voicepeak")
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.stdout = "Emotion List:\nhappy\nsad\n"
+
+        assert engine.get_emotions("Female 1") == ["happy", "sad"]
+        mock_run.assert_called_once_with(
+            ["dummy-voicepeak", "--list-emotion", "Female 1"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=3.0,
+        )
+
+
 def test_voicepeak_get_speakers():
     engine = VoicepeakEngine(executable_path="dummy-voicepeak")
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value.stdout = "Narrator List:\n  Male 1\n  Female 1\n"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Narrator List:\n  Male 1\n  Female 1\n",
+        )
         speakers = engine.get_speakers()
         assert len(speakers) == 2
         assert speakers[0].id == "Male 1"

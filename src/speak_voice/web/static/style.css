@@ -195,6 +195,18 @@ select:focus, input[type="text"]:focus, input[type="password"]:focus, textarea:f
   font-weight: 700;
 }
 
+.slider-range {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+}
+
+.emotion-slider {
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border-color);
+}
+
 input[type="range"] {
   -webkit-appearance: none;
   width: 100%;

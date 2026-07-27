@@ -35,6 +35,8 @@ def test_voicevox_get_speakers():
         assert len(speakers) == 2
         assert speakers[0].id == "0"
         assert speakers[0].name == "四国めたん (あまあま)"
+        assert speakers[0].raw_info["speakerName"] == "四国めたん"
+        assert speakers[0].raw_info["styleName"] == "あまあま"
         assert speakers[1].id == "2"
         assert speakers[1].name == "四国めたん (ツンツン)"
 

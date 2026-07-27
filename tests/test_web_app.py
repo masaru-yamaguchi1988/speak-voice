@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+from speak_voice.engines import VoicepeakEngine
 from speak_voice.web.app import app, get_ollama_models, ollama_http_error, ollama_root_url
 
 client = TestClient(app)
@@ -54,6 +55,42 @@ def test_list_ollama_models_endpoint():
 
     assert response.status_code == 200
     assert response.json() == {"models": ["gemma3:latest", "qwen3:8b"]}
+
+
+def test_voicevox_engine_settings_match_supported_ranges():
+    response = client.get("/api/engine-settings", params={"engine": "voicevox"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert [parameter["id"] for parameter in data["parameters"]] == [
+        "speed",
+        "pitch",
+        "intonation",
+        "volume",
+    ]
+    pitch = next(item for item in data["parameters"] if item["id"] == "pitch")
+    assert pitch["min"] == -0.15
+    assert pitch["max"] == 0.15
+    assert data["emotions"] == []
+
+
+def test_voicepeak_engine_settings_include_speaker_emotions():
+    engine = VoicepeakEngine(executable_path="dummy")
+    with (
+        patch.object(engine, "get_emotions", return_value=["happy", "sad"]),
+        patch.dict(
+            "speak_voice.web.app.ENGINES",
+            {"voicepeak": lambda: engine},
+            clear=True,
+        ),
+    ):
+        response = client.get(
+            "/api/engine-settings",
+            params={"engine": "voicepeak", "speaker": "Female 1"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["emotions"] == ["happy", "sad"]
 
 
 def test_hook_speak_validation():

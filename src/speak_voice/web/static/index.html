@@ -71,45 +71,8 @@
       <!-- 調声用スライダー -->
       <div class="form-group">
         <label>声質・調声パラメータ</label>
-        <div class="sliders-grid">
-          <div class="slider-container">
-            <div class="slider-header">
-              <span class="slider-title">話速 (Speed)</span>
-              <span id="speed-val" class="slider-value">1.0</span>
-            </div>
-            <input type="range" id="speed" min="0.5" max="2.0" step="0.05" value="1.0">
-          </div>
-
-          <div class="slider-container">
-            <div class="slider-header">
-              <span class="slider-title">音高 (Pitch)</span>
-              <span id="pitch-val" class="slider-value">0.0</span>
-            </div>
-            <input type="range" id="pitch" min="-0.5" max="0.5" step="0.05" value="0.0">
-          </div>
-
-          <div class="slider-container">
-            <div class="slider-header">
-              <span class="slider-title">抑揚 (Intonation)</span>
-              <span id="intonation-val" class="slider-value">1.0</span>
-            </div>
-            <input type="range" id="intonation" min="0.0" max="2.0" step="0.1" value="1.0">
-          </div>
-
-          <div class="slider-container">
-            <div class="slider-header">
-              <span class="slider-title">音量 (Volume)</span>
-              <span id="volume-val" class="slider-value">1.0</span>
-            </div>
-            <input type="range" id="volume" min="0.0" max="2.0" step="0.1" value="1.0">
-          </div>
-        </div>
-      </div>
-
-      <!-- 感情スタイル設定 (オプション) -->
-      <div class="form-group">
-        <label for="style-input">感情 / スタイル (任意)</label>
-        <input type="text" id="style-input" placeholder="例: happy=50,sad=50 (Voicepeak等用)">
+        <div id="sliders-grid" class="sliders-grid"></div>
+        <p id="parameter-status" class="model-status" aria-live="polite"></p>
       </div>
 
       <!-- テスト発話ボタン -->
@@ -256,15 +219,80 @@
     reloadModelsBtn.addEventListener("click", loadModels);
     baseUrlInput.addEventListener("change", loadModels);
 
-    // スライダー群
-    const sliders = ["speed", "pitch", "intonation", "volume"];
-    sliders.forEach(id => {
-      const el = document.getElementById(id);
-      const valEl = document.getElementById(`${id}-val`);
-      el.addEventListener("input", () => {
-        valEl.textContent = Number(el.value).toFixed(2);
-      });
-    });
+    const slidersGrid = document.getElementById("sliders-grid");
+    const parameterStatus = document.getElementById("parameter-status");
+
+    async function loadEngineSettings() {
+      const engine = engineSelect.value;
+      const speaker = speakerSelect.value;
+      slidersGrid.innerHTML = "";
+      parameterStatus.textContent = "調声項目を取得中...";
+      if (!engine) return;
+
+      try {
+        const query = new URLSearchParams({ engine });
+        if (speaker) query.set("speaker", speaker);
+        const resp = await fetch(`/api/engine-settings?${query}`);
+        const settings = await resp.json();
+        if (!resp.ok) {
+          throw new Error(settings.detail || "調声項目を取得できませんでした");
+        }
+
+        settings.parameters.forEach(param => {
+          const container = document.createElement("div");
+          container.className = "slider-container";
+          container.innerHTML = `
+            <div class="slider-header">
+              <span class="slider-title">${param.label}</span>
+              <span class="slider-value">${Number(param.default).toFixed(2)}</span>
+            </div>
+            <input type="range" data-tuning-param="${param.id}"
+              min="${param.min}" max="${param.max}" step="${param.step}" value="${param.default}">
+            <div class="slider-range"><span>${param.min}</span><span>${param.max}</span></div>
+          `;
+          const input = container.querySelector("input");
+          const value = container.querySelector(".slider-value");
+          input.addEventListener("input", () => {
+            value.textContent = Number(input.value).toFixed(2);
+            updateBookmarklet();
+          });
+          slidersGrid.appendChild(container);
+        });
+
+        settings.emotions.forEach(emotion => {
+          const container = document.createElement("div");
+          container.className = "slider-container emotion-slider";
+          container.innerHTML = `
+            <div class="slider-header">
+              <span class="slider-title">感情: ${emotion}</span>
+              <span class="slider-value">0</span>
+            </div>
+            <input type="range" data-emotion="${emotion}" min="0" max="100" step="1" value="0">
+            <div class="slider-range"><span>0</span><span>100</span></div>
+          `;
+          const input = container.querySelector("input");
+          const value = container.querySelector(".slider-value");
+          input.addEventListener("input", () => {
+            value.textContent = input.value;
+            updateBookmarklet();
+          });
+          slidersGrid.appendChild(container);
+        });
+
+        if (settings.parameters.length === 0 && settings.emotions.length === 0) {
+          parameterStatus.textContent = "このエンジンで設定可能な調声項目はありません。";
+        } else {
+          const emotionText = settings.emotions.length
+            ? `・感情${settings.emotions.length}種類`
+            : "";
+          parameterStatus.textContent =
+            `${settings.parameters.length}個の調声項目${emotionText}を利用できます。`;
+        }
+        updateBookmarklet();
+      } catch (err) {
+        parameterStatus.textContent = `取得エラー: ${err.message}`;
+      }
+    }
 
     // 起動時にエンジン一覧をロード
     async function loadEngines() {
@@ -288,6 +316,7 @@
           await loadSpeakers(engines[0].key);
         }
         updateBookmarklet();
+        await loadEngineSettings();
         connectionStatus.textContent = "API 接続完了";
         connectionStatus.style.borderColor = "var(--success-color)";
         connectionStatus.style.color = "var(--success-color)";
@@ -353,21 +382,31 @@
     }
 
     // エンジン切り替えイベント
-    engineSelect.addEventListener("change", (e) => {
-      loadSpeakers(e.target.value);
+    engineSelect.addEventListener("change", async (e) => {
+      await loadSpeakers(e.target.value);
+      await loadEngineSettings();
     });
+    speakerSelect.addEventListener("change", loadEngineSettings);
 
     // 調声パラメータ値の取得
     function getTuningParams() {
-      return {
+      const params = {
         engine: engineSelect.value,
         speaker: speakerSelect.value,
-        speed: parseFloat(document.getElementById("speed").value),
-        pitch: parseFloat(document.getElementById("pitch").value),
-        intonation: parseFloat(document.getElementById("intonation").value),
-        volume: parseFloat(document.getElementById("volume").value),
-        style: document.getElementById("style-input").value || null
+        speed: null,
+        pitch: null,
+        intonation: null,
+        volume: null,
+        style: null
       };
+      document.querySelectorAll("[data-tuning-param]").forEach(input => {
+        params[input.dataset.tuningParam] = parseFloat(input.value);
+      });
+      const emotions = [...document.querySelectorAll("[data-emotion]")]
+        .filter(input => Number(input.value) > 0)
+        .map(input => `${input.dataset.emotion}=${input.value}`);
+      params.style = emotions.length ? emotions.join(",") : null;
+      return params;
     }
 
     function updateBookmarklet() {
@@ -398,12 +437,9 @@
       }
     });
 
-    [
-      engineSelect,
-      speakerSelect,
-      ...sliders.map(id => document.getElementById(id)),
-      document.getElementById("style-input")
-    ].forEach(el => el.addEventListener("change", updateBookmarklet));
+    [engineSelect, speakerSelect].forEach(el =>
+      el.addEventListener("change", updateBookmarklet)
+    );
 
     // テスト発話
     document.getElementById("test-speak-btn").addEventListener("click", async () => {

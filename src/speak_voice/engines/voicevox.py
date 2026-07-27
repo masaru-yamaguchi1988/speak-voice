@@ -41,7 +41,16 @@ class VoicevoxEngine(BaseEngine):
                     style_name = s.get("name", "")
                     speakers.append(
                         Speaker(
-                            id=style_id, name=f"{name} ({style_name})", styles=styles, raw_info=item
+                            id=style_id,
+                            name=f"{name} ({style_name})",
+                            styles=styles,
+                            raw_info={
+                                "speakerName": name,
+                                "styleName": style_name,
+                                "speakerUuid": item.get("speaker_uuid"),
+                                "styleId": style_id,
+                                "styleType": s.get("type"),
+                            },
                         )
                     )
             return speakers

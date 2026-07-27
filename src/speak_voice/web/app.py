@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from speak_voice.base import BaseEngine
 from speak_voice.bridge import VoiceAgentBridge
 from speak_voice.cli import ENGINES
+from speak_voice.engines import VoicepeakEngine
 
 app = FastAPI(title="speak-voice Web Console")
 app.add_middleware(
@@ -75,6 +76,54 @@ def speak_worker():
 
 worker_thread = threading.Thread(target=speak_worker, daemon=True)
 worker_thread.start()
+
+ENGINE_PARAMETERS = {
+    "voicevox": [
+        {"id": "speed", "label": "話速", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        {"id": "pitch", "label": "音高", "min": -0.15, "max": 0.15, "step": 0.01, "default": 0.0},
+        {
+            "id": "intonation",
+            "label": "抑揚",
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "default": 1.0,
+        },
+        {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
+    ],
+    "coeiroink": [
+        {"id": "speed", "label": "話速", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        {"id": "pitch", "label": "音高", "min": -0.5, "max": 0.5, "step": 0.01, "default": 0.0},
+        {
+            "id": "intonation",
+            "label": "抑揚",
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "default": 1.0,
+        },
+        {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
+    ],
+    "voicepeak": [
+        {"id": "speed", "label": "話速", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        {"id": "pitch", "label": "音高", "min": -1.5, "max": 1.5, "step": 0.05, "default": 0.0},
+        {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
+    ],
+    "aivoice": [
+        {"id": "speed", "label": "話速", "min": 0.5, "max": 4.0, "step": 0.05, "default": 1.0},
+        {"id": "pitch", "label": "音高", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        {
+            "id": "intonation",
+            "label": "抑揚",
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.05,
+            "default": 1.0,
+        },
+        {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
+    ],
+    "voisona": [],
+}
 
 
 def ollama_root_url(base_url: str) -> str:
@@ -186,6 +235,25 @@ def list_models(provider: str, base_url: Optional[str] = None):
             status_code=502,
             detail=f"モデル一覧を取得できませんでした: {error}",
         ) from error
+
+
+@app.get("/api/engine-settings")
+def engine_settings(engine: str, speaker: Optional[str] = None):
+    """選択エンジンで利用できる調声項目と範囲を返します。"""
+    engine_key = engine.lower()
+    if engine_key not in ENGINES:
+        raise HTTPException(status_code=400, detail=f"Unknown engine: {engine}")
+
+    emotions = []
+    if engine_key == "voicepeak" and speaker:
+        instance = ENGINES[engine_key]()
+        if isinstance(instance, VoicepeakEngine):
+            emotions = instance.get_emotions(speaker)
+
+    return {
+        "parameters": ENGINE_PARAMETERS[engine_key],
+        "emotions": emotions,
+    }
 
 
 @app.get("/api/speakers")

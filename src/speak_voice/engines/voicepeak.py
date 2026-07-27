@@ -40,7 +40,7 @@ class VoicepeakEngine(BaseEngine):
                 stderr=subprocess.DEVNULL,
                 timeout=1.0,
             )
-            return True
+            return result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
 
@@ -72,6 +72,25 @@ class VoicepeakEngine(BaseEngine):
                         )
                     )
             return speakers
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return []
+
+    def get_emotions(self, speaker_id: str) -> List[str]:
+        """指定ナレーターで利用可能な感情名を取得します。"""
+        try:
+            result = subprocess.run(
+                [self.executable_path, "--list-emotion", speaker_id],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=3.0,
+            )
+            emotions = []
+            for line in result.stdout.splitlines():
+                name = line.strip()
+                if name and not name.startswith("Emotion List:"):
+                    emotions.append(name)
+            return emotions
         except (subprocess.SubprocessError, FileNotFoundError):
             return []
 
