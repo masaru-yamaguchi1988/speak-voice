@@ -1,288 +1,375 @@
 # speak-voice
 
-`speak-voice` は、日本の主要な音声合成ソフト（VOICEVOX、COEIROINK、Voicepeak、A.I.VOICE 2、VoiSona Talk）をPythonライブラリおよびCLIから統一されたコードで操作できるようにする、クロスプラットフォーム（Mac / Windows）対応の音声合成ラッパーです。
+`speak-voice`は、VOICEVOX、COEIROINK、Voicepeakなどの日本語音声合成ソフトを、Python API・CLI・Webコンソールから共通の操作で利用するためのラッパーです。
 
-AIエージェントの会話テキストの自動読み上げや、リアルタイムなストリーミング発話に最適化されています。
+LLMのストリーミング回答を文章単位で順番に読み上げるほか、ブラウザで選択した文章や、他のアプリからコピーした文章をすぐに音声化できます。
 
-## 特徴
-- **マルチエンジン対応**: 同一のAPI（`BaseEngine`）から複数の異なる音声合成ソフトを同じ方法で呼び出せます。
-- **クロスプラットフォーム再生機能**: `afplay` (Mac) や `winsound` (Windows) などのOS標準機能を利用するため、ビルドエラーになりがちな重いサウンド関係の依存ライブラリなしで即座に音声を再生できます。
-- **自動発話ブリッジ (`VoiceAgentBridge`)**: AIのストリーミング応答を逐次受け取り、文単位に自動分割しながらバックグラウンドで非同期的に再生・読み上げが可能です。
-- **将来的なWindows対応とCI完備**: macOSおよびWindows双方のネイティブAPI/コマンドラインに配慮した設計となっており、GitHub Actionsでの自動テストCIが構成されています。
+## 主な機能
 
-## インストール
+- 複数の音声合成エンジンを共通APIで操作
+- OpenAI、Gemini、Ollama、OpenAI互換ローカルLLMとのチャット
+- Ollama／ローカルLLMの利用可能モデルを自動取得して選択
+- LLMの回答を画面へストリーミング表示しながら文単位で読み上げ
+- 停止ボタンやブラウザ切断に連動して、回答生成・再生中の音声・待機キューを停止
+- ブラウザの選択テキストを送るブックマークレット
+- クリップボード、Raycast、Alfred、macOSショートカットなどからの読み上げ
+- macOS、Windows、Linuxの標準機能を利用した音声再生
+
+## 対応状況
+
+| 音声エンジン | キー | 接続方式 | 状況 |
+|---|---|---|---|
+| VOICEVOX | `voicevox` | HTTP API `127.0.0.1:50021` | 対応 |
+| COEIROINK | `coeiroink` | HTTP API `127.0.0.1:50032` | 対応 |
+| Voicepeak | `voicepeak` | 公式CLI | 対応 |
+| A.I.VOICE 2 | `aivoice` | Windows COM API | 試験的実装・実機検証が必要 |
+| VoiSona Talk | `voisona` | － | 未実装 |
+
+| LLMプロバイダー | 用途 | モデル選択 |
+|---|---|---|
+| Ollama | ローカルLLM | `/api/tags`から自動取得 |
+| Local OpenAI | LM Studio、vLLMなど | `/v1/models`から自動取得 |
+| OpenAI | OpenAI API | アプリの既定モデル |
+| Gemini | Google Gemini API | APIから利用可能モデルを探索 |
+| Mock | 接続確認 | APIキー不要 |
+
+## 必要環境
+
+- Python 3.10以上
+- 使用する音声合成ソフト
+- Webコンソールを使う場合はWeb用の追加依存関係
+- ローカルLLMを使う場合はOllama、LM Studioなど
+
+音声再生には次のOS標準機能または一般的なコマンドを使用します。
+
+- macOS: `afplay`
+- Windows: `winsound`
+- Linux: `aplay`、`paplay`、`play`のいずれか
+
+## クイックスタート
+
+### 1. インストール
+
+Webコンソールを含めて開発モードでインストールします。
 
 ```bash
-pip install .
+python -m pip install -e ".[web]"
 ```
 
-開発者モードでインストールする場合（テストやコードの書き換えを行う場合）：
+テスト・整形ツールも入れる場合：
+
 ```bash
-pip install -e ".[dev]"
+python -m pip install -e ".[web,dev]"
 ```
 
-## 各エンジンの準備と設定
+### 2. 音声合成エンジンを起動
 
-各エンジンクラスをインスタンス化する際、接続設定を指定できます。
+たとえばVOICEVOXを使用する場合は、VOICEVOXエディタまたはエンジンを起動します。
 
-| エンジン名 | キー名 | 接続方式 / デフォルト値 | 必要な事前準備 |
-| :--- | :--- | :--- | :--- |
-| **VOICEVOX** | `voicevox` | HTTP API (`127.0.0.1:50021`) | VOICEVOX エディタまたはエンジンを起動しておく |
-| **COEIROINK** | `coeiroink` | HTTP API (`127.0.0.1:50032`) | COEIROINK エディタを起動しておく |
-| **Voicepeak** | `voicepeak` | CLI 実行ファイル | パスが通っているか、`/Applications/voicepeak.app` にインストールされていること |
-| **A.I.VOICE 2** | `aivoice` | Windows COM API | A.I.VOICE 2 Editor がインストールされていること（Windows専用） |
-| **VoiSona Talk** | `voisona` | スタブ（将来対応用） | - |
+接続状態はCLIから確認できます。
 
----
-
-## 1. ライブラリとしての使用方法 (Python API)
-
-### 基本的な音声合成と再生
-```python
-from speak_voice.engines import VoicevoxEngine
-from speak_voice.player import play_wav
-
-# VOICEVOXエンジンの初期化 (デフォルトでは 127.0.0.1:50021)
-engine = VoicevoxEngine()
-
-# 起動状態のチェック
-if engine.is_available():
-    # 利用可能なキャラクター一覧の取得
-    speakers = engine.get_speakers()
-    for speaker in speakers:
-        print(f"ID: {speaker.id} - 名前: {speaker.name}")
-
-    # 音声の合成（話速1.2倍、音高少し高めに設定）
-    # speaker_id には get_speakers() で取得した ID (例: VOICEVOXなら "1", COEIROINKなら "uuid:style_id") を渡します
-    wav_bytes = engine.synthesize_wav(
-        text="こんにちは、お元気ですか？",
-        speaker_id="1",
-        speed=1.2,
-        pitch=0.05
-    )
-
-    # 音声の再生
-    play_wav(wav_bytes)
-```
-
----
-
-## 2. AIエージェント（LLM）との詳細な連携方法
-
-AIエージェントのテキスト応答は、トークン単位で少しずつ生成（ストリーミング出力）されるのが一般的です。
-`VoiceAgentBridge` を使用すると、画面上にAIの返答文字を出力させつつ、裏側で自然な文章単位（`。`や改行）に自動分割して順番に喋らせることができます。
-
-### 例1：OpenAI API（ストリーミング）との連携例
-```python
-import os
-from openai import OpenAI
-from speak_voice import VoiceAgentBridge
-from speak_voice.engines import VoicevoxEngine
-
-# OpenAIクライアントと音声合成エンジンの準備
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-engine = VoicevoxEngine()
-
-# 話速やキャラクター（例: 四国めたん=2番など）を設定してブリッジを作成
-bridge = VoiceAgentBridge(engine, speaker_id="2", speed=1.1)
-
-# ユーザーからのチャット入力を模倣
-prompt = "日本の美味しい食べ物について、3文で教えてください。"
-
-# OpenAIにストリーミング形式でリクエストを投げる
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": prompt}],
-    stream=True
-)
-
-# ストリーミングトークンを中継するジェネレータ関数を定義
-def token_generator():
-    for chunk in response:
-        content = chunk.choices[0].delta.content
-        if content:
-            # 1. ターミナル等にリアルタイムでテキストを表示
-            print(content, end="", flush=True)
-            # 2. 音声ブリッジにテキストの断片を yield
-            yield content
-    print() # 最後に改行を入れる
-
-try:
-    # speak_streamを実行すると、ジェネレータから随時届く文字を日本語の「文」として
-    # 切り出し、バックグラウンドのキューに溜めて順次発話してくれます。
-    bridge.speak_stream(token_generator())
-
-    # キュー内の音声合成・再生がすべて完了するまで待機
-    bridge.wait_until_done()
-finally:
-    # バックグラウンド再生スレッドを安全に停止
-    bridge.stop()
-```
-
-### 例2：Gemini API (`google-genai` SDK) との連携例
-```python
-import os
-from google import genai
-from speak_voice import VoiceAgentBridge
-from speak_voice.engines import VoicevoxEngine
-
-# Google GenAI クライアント (最新 SDK `google-genai` 推奨)
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-engine = VoicevoxEngine()
-
-bridge = VoiceAgentBridge(engine, speaker_id="2", speed=1.1)
-
-# 利用中のGemini APIで有効なモデル名を指定
-stream = client.models.generate_content_stream(
-    model=os.environ["GEMINI_MODEL"],
-    contents='こんにちは、今日の天気はどうですか？'
-)
-
-def gemini_generator():
-    for chunk in stream:
-        if hasattr(chunk, "text") and chunk.text:
-            print(chunk.text, end="", flush=True)
-            yield chunk.text
-    print()
-
-try:
-    bridge.speak_stream(gemini_generator())
-    bridge.wait_until_done()  # 音声再生完了までしっかり待つ
-finally:
-    bridge.stop()
-```
-
-> [!TIP]
-> **再生完了の同期についての注意点**  
-> `speak_stream()` の呼び出し自体はテキスト出力ストリームが終了した時点で完了します。  
-> 音声合成とスピーカー再生が最後まで途切れるのを防ぐため、`finally` ブロックで `bridge.stop()` を呼ぶ直前に **`bridge.wait_until_done()`** を必ず呼び出してください。
-
----
-
-## 3. コマンドラインツール (CLI) としての使用方法
-
-インストールが完了すると、`speak-voice` コマンドが使用可能になります。
-
-### 対応エンジンの一覧と起動確認
 ```bash
 speak-voice list-engines
-```
-*出力例:*
-```
-Available Engines:
-  - voicevox    : VOICEVOX (Available)
-  - coeiroink   : COEIROINK (Not Installed/Running)
-  - voicepeak   : Voicepeak (Available)
-  ...
-```
-
-### 特定エンジンの話者一覧の取得
-```bash
 speak-voice list-speakers --engine voicevox
 ```
-*出力例:*
-```
-Speakers for VOICEVOX:
-  ID                             | Name
---------------------------------------------------
-  2                              | 四国めたん (ノーマル)
-  0                              | 四国めたん (あまあま)
-  ...
-```
 
-### 合成と再生
-指定したテキストを指定したエンジンと話者で喋らせます。
-```bash
-# VOICEVOXで喋らせる
-speak-voice speak "こんにちは" --engine voicevox --speaker 2
-
-# Voicepeakで感情を設定して喋らせる (※エモーショナル対応モデルのみ)
-speak-voice speak "とても嬉しいです" --engine voicepeak --speaker "Female 1" --style "happy=100"
-
-# 調声パラメータを指定する (話速 1.5倍)
-speak-voice speak "早口で喋ります" --engine voicevox --speaker 2 --speed 1.5
-```
-
-### 音声データのファイル保存
-`-o` または `--out` オプションを使用すると、再生する代わりにWAVファイルに保存します。
-```bash
-speak-voice speak "この音声を保存します" --engine voicevox --speaker 2 --out output.wav
-```
-
-### 他のアプリやブラウザから読み上げる
-
-Webコンソールを起動した状態で、任意のテキストをフックAPIへ送れます。
+### 3. Webコンソールを起動
 
 ```bash
-speak-voice hook "読み上げたい文章"
+speak-voice-web
 ```
 
-クリップボードにコピーした文章を読み上げる場合：
+ブラウザで[http://127.0.0.1:8000](http://127.0.0.1:8000)を開きます。
+
+## Webコンソール
+
+Webコンソールでは、次の順番で設定します。
+
+1. LLMプロバイダーを選択
+2. 必要に応じて接続先やAPIキーを入力
+3. ローカルLLMの場合は取得されたモデルをプルダウンから選択
+4. 音声合成エンジンと話者を選択
+5. 話速・音高・抑揚・音量を調整
+6. テスト再生またはチャットを実行
+
+### Ollamaを使用する
+
+Ollamaを起動し、少なくとも1つモデルを取得しておきます。
+
+```bash
+ollama list
+ollama pull gemma3
+```
+
+Web画面で次を選択します。
+
+- AIプロバイダー: `Ollama`
+- Base URL: `http://localhost:11434/v1`
+- モデル: 自動取得されたモデルから選択
+
+一覧が更新されない場合は「再取得」を押してください。
+
+### LM Studioなどを使用する
+
+OpenAI互換サーバーを起動し、Web画面で次を選択します。
+
+- AIプロバイダー: `Local OpenAI`
+- Base URL: 例 `http://localhost:1234/v1`
+- モデル: `/v1/models`から取得されたモデル
+
+### 回答と音声を停止する
+
+チャット中に「停止」を押すと、次の処理をまとめて中断します。
+
+- ブラウザでの回答受信
+- サーバー側の回答処理
+- 現在再生中の音声
+- 待機中の読み上げ文章
+
+タブを閉じるなどブラウザとの接続が切れた場合も、サーバー側で検知して停止します。音声合成APIへの実行中リクエストだけは、接続先の処理が戻るまで短時間残ることがあります。
+
+## ブラウザや他のアプリから読み上げる
+
+### ブックマークレット
+
+Webコンソールで音声エンジンと話者を選択し、「選択テキストを読み上げ」をブラウザのブックマークバーへドラッグします。
+
+任意のWebページで文章を選択してブックマークを押すと、ローカルの`speak-voice`へ文章が送られます。文章を選択していない場合は入力ダイアログが表示されます。
+
+Webコンソールは`127.0.0.1`だけで待ち受けますが、ブックマークレット利用のため外部ページからローカルのフックAPIへのPOSTを許可しています。
+
+### クリップボード
+
+文章をコピーしてから実行します。
 
 ```bash
 speak-voice-clip --wait
 ```
 
-`speak-voice-clip` はRaycast、Alfred、macOSショートカットなどのシェルコマンドとして登録できます。Webコンソールには、Webページ上で選択した文章を送信するブックマークレットも用意されています。音声エンジンと話者を選んだ後、「選択テキストを読み上げ」ボタンをブラウザのブックマークバーへドラッグしてください。
-
-Webサーバーを起動していない場合、CLIの`hook`コマンドは指定した音声エンジンを直接呼び出して再生を試みます。
-
----
-
-## 4. Webコンソール（GUI）の使用方法
-
-Webコンソールを使用すると、ブラウザ上でエンジン選択・話者選択・調声パラメータ設定・AIエージェントとのチャットテストをすべてGUIで操作できます。
-
-### 起動方法
-
-Web用の依存関係をインストールしてから起動します：
+エンジンや話者も指定できます。
 
 ```bash
-pip install -e ".[web]"
-speak-voice-web
+speak-voice-clip \
+  --engine voicevox \
+  --speaker 2 \
+  --speed 1.1 \
+  --wait
 ```
 
-または直接 Python モジュールとして起動：
+クリップボード取得には次のコマンドを使用します。
+
+- macOS: `pbpaste`
+- Windows: PowerShell `Get-Clipboard`
+- Linux: `wl-paste`、`xclip`、`xsel`のいずれか
+
+このコマンドはRaycast、Alfred、macOSショートカットなどのシェルコマンドとして登録できます。
+
+### テキストを直接送る
 
 ```bash
-python -m speak_voice.web.app
+speak-voice hook "読み上げたい文章" \
+  --engine voicevox \
+  --speaker 2
 ```
 
-サーバーが `http://127.0.0.1:8000` で起動します。ブラウザでアクセスしてください。
+通常はWebサーバーの`POST /api/hook/speak`へ送信します。Webサーバーへ接続できない場合は、指定した音声エンジンをCLIから直接呼び出して再生を試みます。
 
-### Webコンソールの機能
+## CLI
 
-#### 左パネル: 連携設定 ＆ 音声調声
-- **API Key 入力**: OpenAI / Gemini の API Key を入力すると、実際のLLMと連携してチャットできます。未入力の場合はモックエージェントで動作確認が可能です。
-- **エンジン選択**: 対応している音声合成エンジン（VOICEVOX、COEIROINK、Voicepeak 等）をドロップダウンで切り替えられます。起動中のエンジンには「有効」と表示されます。
-- **話者選択**: 選択中のエンジンに登録されているキャラクター/話者がドロップダウンに一覧表示されます。
-- **調声スライダー**: 話速（Speed）、音高（Pitch）、抑揚（Intonation）、音量（Volume）をスライダーでリアルタイムに調整できます。
-- **テスト再生ボタン**: 現在の設定パラメータでテスト用の定型文を即座に合成・再生します。
+### エンジンの状態を確認
 
-#### 右パネル: AIエージェント対話
-- テキストを入力して送信すると、設定されたAPI（OpenAI / Gemini / Mock）を通じてAIが応答を生成します。
-- 生成されたテキストは画面上に表示されると同時に、選択中のエンジン・話者・調声パラメータを使って自動的に音声再生されます。
+```bash
+speak-voice list-engines
+```
 
----
+### 話者を確認
 
-## 5. 注意点・トラブルシューティング
+```bash
+speak-voice list-speakers --engine voicevox
+```
 
-> [!WARNING]
-> **Gemini API のモデル名指定について**  
-> 利用可能なモデル名はAPIや時期によって変わります。Webコンソールは、入力されたモデル名を優先し、未指定時はGemini APIから取得した利用可能なモデルを選びます。モデル一覧を取得できない場合は、利用中のAPIで有効なモデル名を画面から明示してください。
+### 合成して再生
 
-> [!NOTE]
-> **Google SDK のバージョン互換性**  
-> 現在 Google 公式から提供されている新しい `google-genai` SDK (`from google import genai`) の利用を推奨します。旧ライブラリ `google-generativeai` がインストールされていない環境でも問題なく動作します。
+```bash
+speak-voice speak "こんにちは" \
+  --engine voicevox \
+  --speaker 2
+```
 
-> [!IMPORTANT]
-> **音声の読み上げが途中で切れる場合**  
-> `VoiceAgentBridge` を Python スクリプトで使用する際は、AIのテキスト生成終了と音声再生完了のタイミングが異なります。`bridge.stop()` を呼ぶ前に必ず **`bridge.wait_until_done()`** を実行して発話キューの処理完了を待機させてください。
+調声パラメータを指定できます。
 
----
+```bash
+speak-voice speak "少し早口で読み上げます" \
+  --engine voicevox \
+  --speaker 2 \
+  --speed 1.2 \
+  --pitch 0.05 \
+  --intonation 1.1 \
+  --volume 1.0
+```
 
-## テストの実行
+Voicepeakでは感情パラメータも指定できます。
+
+```bash
+speak-voice speak "とても嬉しいです" \
+  --engine voicepeak \
+  --speaker "Female 1" \
+  --style "happy=100"
+```
+
+### WAVファイルへ保存
+
+```bash
+speak-voice speak "保存する音声です" \
+  --engine voicevox \
+  --speaker 2 \
+  --out output.wav
+```
+
+## Python API
+
+### 音声を合成して再生
+
+```python
+from speak_voice.engines import VoicevoxEngine
+from speak_voice.player import play_wav
+
+engine = VoicevoxEngine()
+
+if engine.is_available():
+    wav_bytes = engine.synthesize_wav(
+        text="こんにちは、お元気ですか？",
+        speaker_id="2",
+        speed=1.1,
+        pitch=0.05,
+    )
+    play_wav(wav_bytes)
+```
+
+### ストリーミング文章を順番に読み上げる
+
+`VoiceAgentBridge`は、`。`、`！`、`？`、改行を目安に文章を分割し、バックグラウンドで合成・再生します。
+
+```python
+from speak_voice import VoiceAgentBridge
+from speak_voice.engines import VoicevoxEngine
+
+engine = VoicevoxEngine()
+bridge = VoiceAgentBridge(engine, speaker_id="2", speed=1.1)
+
+
+def text_stream():
+    yield "最初の文章です。"
+    yield "続いて、二つ目の文章です。"
+
+
+try:
+    bridge.speak_stream(text_stream())
+    bridge.wait_until_done()
+finally:
+    bridge.stop()
+```
+
+再生完了を待つ場合は、`bridge.stop()`の前に`bridge.wait_until_done()`を呼んでください。途中で止める場合は`bridge.cancel()`を使用できます。
+
+```python
+bridge.cancel()
+bridge.stop()
+```
+
+音声合成または再生に失敗した場合、`wait_until_done()`は`VoiceBridgeError`を送出します。
+
+## Web API
+
+主なエンドポイント：
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/api/engines` | 音声エンジンと起動状態 |
+| GET | `/api/speakers?engine=voicevox` | 話者一覧 |
+| GET | `/api/models` | ローカルLLMのモデル一覧 |
+| POST | `/api/speak` | 音声合成・再生 |
+| POST | `/api/hook/speak` | 外部アプリ向け読み上げ |
+| POST | `/api/chat` | LLM回答のストリーミング表示・読み上げ |
+
+フックAPIの例：
+
+```bash
+curl http://127.0.0.1:8000/api/hook/speak \
+  -H "Content-Type: application/json" \
+  -d '{
+    "engine": "voicevox",
+    "speaker": "2",
+    "text": "APIから読み上げます",
+    "speed": 1.1,
+    "wait": false
+  }'
+```
+
+`wait: false`ではキュー投入後すぐに応答します。`wait: true`では再生完了まで待ち、合成・再生エラーをHTTPエラーとして返します。
+
+## トラブルシューティング
+
+### Ollamaで404になる
+
+Ollamaが起動していても、指定モデルが未取得の場合は404になります。
+
+```bash
+ollama list
+ollama pull gemma3
+```
+
+Base URLは通常`http://localhost:11434/v1`です。Web画面の「再取得」でモデルが表示されることを確認してください。
+
+### 音声エンジンが「無効」と表示される
+
+- VOICEVOXまたはCOEIROINKのエディタ／エンジンが起動しているか確認
+- 使用ポートが既定値と異なっていないか確認
+- Voicepeakは実行ファイルの場所を確認
+- Voicepeakの場所を変更する場合は`VOICEPEAK_PATH`環境変数を設定
+
+### Linuxで音声が再生されない
+
+`aplay`、`paplay`、`play`のいずれかをインストールしてください。
+
+### クリップボードを取得できない
+
+Linuxでは環境に合わせて`wl-paste`、`xclip`、`xsel`のいずれかをインストールしてください。
+
+### Python APIの読み上げが途中で切れる
+
+`bridge.stop()`の前に`bridge.wait_until_done()`を呼び出してください。
+
+```python
+bridge.wait_until_done()
+bridge.stop()
+```
+
+## 開発
+
+### テスト
 
 ```bash
 pytest
 ```
+
+### CIと整形
+
+CIはLinux、macOS、Windows上のPython 3.10～3.12で次を確認します。
+
+```bash
+black --check src tests
+isort --check src tests
+pytest
+```
+
+ローカルで整形する場合：
+
+```bash
+black src tests
+isort src tests
+```
+
+## ライセンス
+
+MIT
