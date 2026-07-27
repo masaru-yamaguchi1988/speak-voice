@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -7,6 +10,24 @@ from speak_voice.engines import VoicepeakEngine
 from speak_voice.web.app import app, get_ollama_models, ollama_http_error, ollama_root_url
 
 client = TestClient(app)
+
+
+def test_web_app_import_does_not_require_uvicorn():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["uvicorn"] = None; import speak_voice.web.app',
+        ],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_ollama_root_url_accepts_openai_compatible_base_url():
@@ -97,7 +118,7 @@ def test_grouped_speaker_option_includes_character_and_style():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert 'opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;' in response.text
+    assert "opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;" in response.text
 
 
 def test_chat_input_supports_multiline_and_shift_enter_send():
