@@ -65,6 +65,7 @@
         <select id="speaker-select">
           <option value="">エンジンを選択してください</option>
         </select>
+        <p id="speaker-status" class="model-status" aria-live="polite"></p>
       </div>
 
       <!-- 調声用スライダー -->
@@ -178,6 +179,7 @@
     // DOM要素
     const engineSelect = document.getElementById("engine-select");
     const speakerSelect = document.getElementById("speaker-select");
+    const speakerStatus = document.getElementById("speaker-status");
     const providerSelect = document.getElementById("provider-select");
     const baseUrlWrapper = document.getElementById("base-url-wrapper");
     const baseUrlInput = document.getElementById("base-url");
@@ -300,25 +302,52 @@
     // 指定したエンジンの話者一覧をロード
     async function loadSpeakers(engineKey) {
       speakerSelect.innerHTML = "<option>話者リストを取得中...</option>";
+      speakerStatus.textContent = "";
       try {
         const resp = await fetch(`/api/speakers?engine=${engineKey}`);
         currentSpeakers = await resp.json();
+        if (!resp.ok) {
+          throw new Error(currentSpeakers.detail || "話者一覧を取得できませんでした");
+        }
         
         speakerSelect.innerHTML = "";
         if (currentSpeakers.length === 0) {
           speakerSelect.innerHTML = "<option value=''>利用可能な話者がいません</option>";
+          speakerStatus.textContent = "音声エンジンの起動状態を確認してください。";
           return;
         }
 
-        currentSpeakers.forEach(sp => {
-          const opt = document.createElement("option");
-          opt.value = sp.id;
-          opt.textContent = sp.name;
-          speakerSelect.appendChild(opt);
-        });
+        const grouped = currentSpeakers.every(sp => sp.speaker_name && sp.style_name);
+        if (grouped) {
+          const groups = new Map();
+          currentSpeakers.forEach(sp => {
+            if (!groups.has(sp.speaker_name)) {
+              const group = document.createElement("optgroup");
+              group.label = sp.version
+                ? `${sp.speaker_name} (v${sp.version})`
+                : sp.speaker_name;
+              groups.set(sp.speaker_name, group);
+              speakerSelect.appendChild(group);
+            }
+            const opt = document.createElement("option");
+            opt.value = sp.id;
+            opt.textContent = sp.style_name;
+            groups.get(sp.speaker_name).appendChild(opt);
+          });
+          speakerStatus.textContent = `${groups.size}名・${currentSpeakers.length}スタイルを利用できます。`;
+        } else {
+          currentSpeakers.forEach(sp => {
+            const opt = document.createElement("option");
+            opt.value = sp.id;
+            opt.textContent = sp.name;
+            speakerSelect.appendChild(opt);
+          });
+          speakerStatus.textContent = `${currentSpeakers.length}件の話者・スタイルを利用できます。`;
+        }
         updateBookmarklet();
       } catch (err) {
         speakerSelect.innerHTML = "<option value=''>話者のロードに失敗しました</option>";
+        speakerStatus.textContent = `取得エラー: ${err.message}`;
         console.error("Failed to load speakers:", err);
       }
     }

@@ -198,7 +198,17 @@ def list_speakers(engine: str = Query(..., description="Engine key (e.g. voicevo
     try:
         inst = ENGINES[engine_key]()
         speakers = inst.get_speakers()
-        return [{"id": s.id, "name": s.name, "styles": s.styles} for s in speakers]
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "styles": s.styles,
+                "speaker_name": s.raw_info.get("speakerName"),
+                "style_name": s.raw_info.get("styleName"),
+                "version": s.raw_info.get("version"),
+            }
+            for s in speakers
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch speakers: {str(e)}")
 

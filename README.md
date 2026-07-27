@@ -20,7 +20,7 @@ LLMのストリーミング回答を文章単位で順番に読み上げるほ�
 | 音声エンジン | キー | 接続方式 | 状況 |
 |---|---|---|---|
 | VOICEVOX | `voicevox` | HTTP API `127.0.0.1:50021` | 対応 |
-| COEIROINK | `coeiroink` | HTTP API `127.0.0.1:50032` | 対応 |
+| COEIROINK v2 | `coeiroink` | HTTP API `127.0.0.1:50032` | 対応 |
 | Voicepeak | `voicepeak` | 公式CLI | 対応 |
 | A.I.VOICE 2 | `aivoice` | Windows COM API | 試験的実装・実機検証が必要 |
 | VoiSona Talk | `voisona` | － | 未実装 |
@@ -327,6 +327,8 @@ Base URLは通常`http://localhost:11434/v1`です。Web画面の「再取得」
 - 使用ポートが既定値と異なっていないか確認
 - Voicepeakは実行ファイルの場所を確認
 - Voicepeakの場所を変更する場合は`VOICEPEAK_PATH`環境変数を設定
+
+COEIROINKは軽量な`/v1/engine_info`で起動確認し、画像データを含まない`/v1/speakers_path_variant`から話者一覧を取得します。音声合成にはCOEIROINK v2の`/v1/synthesis`を使用します。
 
 ### Linuxで音声が再生されない
 
