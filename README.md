@@ -235,6 +235,21 @@ speak-voice speak "保存する音声です" \
   --out output.wav
 ```
 
+## セキュリティと依存関係の管理
+
+このリポジトリでは、依存関係の脆弱性を検知するために GitHub Actions 上で `pip-audit` を実行します。
+
+- プッシュまたは PR 時に自動的に脆弱性スキャンを実行
+- 毎週 1 回、定期的に依存関係を確認
+- Dependabot により Python パッケージと GitHub Actions の更新候補を自動的に提案
+
+ローカルでも次のコマンドで確認できます。
+
+```bash
+python -m pip install -e ".[dev]"
+pip-audit -r <(python -m pip freeze)
+```
+
 ## Python API
 
 ### 音声を合成して再生
