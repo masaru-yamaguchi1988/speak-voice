@@ -9,14 +9,21 @@ from typing import Optional
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from speak_voice.base import BaseEngine
 from speak_voice.bridge import VoiceAgentBridge
 from speak_voice.cli import ENGINES
-from speak_voice.engines import VoicepeakEngine
+from speak_voice.engines import VoicepeakEngine, VoiSonaEngine
+from speak_voice.voisona_config import (
+    VoiSonaConfig,
+    clear_voisona_config,
+    get_voisona_config,
+    normalize_local_base_url,
+    set_voisona_config,
+)
 
 app = FastAPI(title="speak-voice Web Console")
 app.add_middleware(
@@ -25,6 +32,21 @@ app.add_middleware(
     allow_methods=["POST"],
     allow_headers=["content-type"],
 )
+
+
+@app.middleware("http")
+async def protect_engine_config(request: Request, call_next):
+    """外部サイトからローカルの認証設定APIを操作・参照されることを防ぐ。"""
+    if request.url.path.startswith("/api/engine-config/"):
+        origin = request.headers.get("origin")
+        host = request.headers.get("host")
+        if origin and origin.rstrip("/") != f"http://{host}":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "エンジン接続設定は同一オリジンからのみ操作できます。"},
+            )
+    return await call_next(request)
+
 
 # 静的ファイルの提供設定 (HTML, CSS, JS)
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -108,9 +130,9 @@ ENGINE_PARAMETERS = {
         {"id": "pitch", "label": "音高", "min": -1.5, "max": 1.5, "step": 0.05, "default": 0.0},
         {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
     ],
-    "aivoice": [
-        {"id": "speed", "label": "話速", "min": 0.5, "max": 4.0, "step": 0.05, "default": 1.0},
-        {"id": "pitch", "label": "音高", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+    "voisona": [
+        {"id": "speed", "label": "話速", "min": 0.5, "max": 2.0, "step": 0.05, "default": 1.0},
+        {"id": "pitch", "label": "音高", "min": -1.0, "max": 1.0, "step": 0.05, "default": 0.0},
         {
             "id": "intonation",
             "label": "抑揚",
@@ -119,9 +141,8 @@ ENGINE_PARAMETERS = {
             "step": 0.05,
             "default": 1.0,
         },
-        {"id": "volume", "label": "音量", "min": 0.0, "max": 2.0, "step": 0.05, "default": 1.0},
+        {"id": "volume", "label": "音量", "min": -10.0, "max": 10.0, "step": 0.5, "default": 0.0},
     ],
-    "voisona": [],
 }
 
 
@@ -191,6 +212,64 @@ class ChatRequest(BaseModel):
     style: Optional[str] = None
 
 
+class VoiSonaConfigRequest(BaseModel):
+    base_url: str
+    username: str
+    password: Optional[str] = None
+    remember: bool = False
+
+
+def voisona_config_response(config: VoiSonaConfig, connected: bool = False) -> dict:
+    return {
+        "base_url": config.base_url,
+        "username": config.username,
+        "password_configured": bool(config.password),
+        "storage": config.source,
+        "connected": connected,
+    }
+
+
+def voisona_candidate(req: VoiSonaConfigRequest) -> VoiSonaConfig:
+    current = get_voisona_config()
+    try:
+        base_url = normalize_local_base_url(req.base_url)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return VoiSonaConfig(
+        base_url=base_url,
+        username=req.username.strip() or current.username,
+        password=req.password or current.password,
+        source="session",
+    )
+
+
+def test_voisona_candidate(config: VoiSonaConfig) -> int:
+    if not config.configured:
+        raise HTTPException(
+            status_code=400,
+            detail="VoiSona APIのユーザー名とパスワードを入力してください。",
+        )
+    try:
+        return VoiSonaEngine(
+            base_url=config.base_url,
+            username=config.username,
+            password=config.password,
+        ).test_connection()
+    except requests.HTTPError as error:
+        status = error.response.status_code if error.response is not None else None
+        detail = (
+            "VoiSona APIの認証に失敗しました。ユーザー名とAPI用パスワードを確認してください。"
+            if status in {401, 403}
+            else "VoiSona APIがエラーを返しました。"
+        )
+        raise HTTPException(status_code=502, detail=detail) from error
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=502,
+            detail="VoiSona Talkへ接続できません。アプリとREST APIの設定を確認してください。",
+        ) from error
+
+
 @app.get("/")
 def read_root():
     index_path = os.path.join(static_dir, "index.html")
@@ -198,6 +277,54 @@ def read_root():
         with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>speak-voice Web Console</h1><p>Static files not found yet.</p>")
+
+
+@app.get("/api/engine-config/voisona")
+def read_voisona_config():
+    config = get_voisona_config()
+    connected = False
+    if config.configured:
+        try:
+            VoiSonaEngine(
+                base_url=config.base_url,
+                username=config.username,
+                password=config.password,
+            ).test_connection()
+            connected = True
+        except (requests.RequestException, RuntimeError):
+            pass
+    return voisona_config_response(config, connected=connected)
+
+
+@app.post("/api/engine-config/voisona/test")
+def test_voisona_config(req: VoiSonaConfigRequest):
+    config = voisona_candidate(req)
+    voice_count = test_voisona_candidate(config)
+    return {
+        **voisona_config_response(config, connected=True),
+        "voice_count": voice_count,
+    }
+
+
+@app.put("/api/engine-config/voisona")
+def update_voisona_config(req: VoiSonaConfigRequest):
+    config = voisona_candidate(req)
+    voice_count = test_voisona_candidate(config)
+    try:
+        saved = set_voisona_config(config, remember=req.remember)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {
+        **voisona_config_response(saved, connected=True),
+        "voice_count": voice_count,
+    }
+
+
+@app.delete("/api/engine-config/voisona")
+def delete_voisona_config():
+    clear_voisona_config(clear_keyring=True)
+    remaining = get_voisona_config()
+    return voisona_config_response(remaining, connected=False)
 
 
 @app.get("/api/engines")

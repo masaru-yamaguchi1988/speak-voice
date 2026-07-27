@@ -22,8 +22,7 @@ LLMのストリーミング回答を文章単位で順番に読み上げるほ�
 | VOICEVOX | `voicevox` | HTTP API `127.0.0.1:50021` | 対応 |
 | COEIROINK v2 | `coeiroink` | HTTP API `127.0.0.1:50032` | 対応 |
 | Voicepeak | `voicepeak` | 公式CLI | 対応 |
-| A.I.VOICE 2 | `aivoice` | Windows COM API | 試験的実装・実機検証が必要 |
-| VoiSona Talk | `voisona` | － | 未実装 |
+| VoiSona Talk | `voisona` | REST API `127.0.0.1:32766` | 対応（APIはベータ版） |
 
 | LLMプロバイダー | 用途 | モデル選択 |
 |---|---|---|
@@ -97,9 +96,49 @@ VOICEVOXとCOEIROINKでは、スタイルをキャラクター単位でグルー
 - VOICEVOX: 話速、音高、抑揚、音量
 - COEIROINK: 話速、音高、抑揚、音量
 - Voicepeak: 話速、音高、音量、利用可能な感情
-- A.I.VOICE 2: 話速、音高、抑揚、音量
+- VoiSona Talk: 話速、音高、抑揚、音量
 
 Voicepeakでナレーター固有の感情を取得できる場合は、感情ごとの強さも0～100のスライダーで指定できます。
+
+### VoiSona Talkを使用する
+
+VoiSona Talkを起動してログインし、使用するボイスライブラリをダウンロードします。その後、画面右上のメニューから「編集 → 環境設定 → API」を開き、次を設定してください。
+
+1. API用パスワードを設定
+2. 「REST APIを有効にする」をON
+3. Webコンソールで音声合成エンジンに「VoiSona Talk」を選択
+4. 表示されたAPI URL、ユーザー名、API用パスワードを入力
+5. 「接続テスト」または「接続して使用」を実行
+
+パスワードは標準ではWebサーバーのメモリ内だけに保持され、サーバー終了時に消去されます。「この端末の資格情報ストアに保存する」を選択した場合のみ、macOSキーチェーン、Windows資格情報マネージャー、Linux Secret ServiceなどのOS資格情報ストアへ保存します。ブラウザのLocal Storageには保存しません。
+
+ヘッドレス実行やCLIでは、環境変数も使用できます。
+
+```bash
+export VOISONA_API_USER="VoiSona Talkに表示されたユーザー名"
+export VOISONA_API_PASSWORD="設定したAPI用パスワード"
+export VOISONA_API_PORT="32766"
+```
+
+ポートを含む接続先全体を変更する場合は、`VOISONA_API_URL`を使用できます。
+
+```bash
+export VOISONA_API_URL="http://127.0.0.1:32766/api/talk/v1"
+```
+
+Web画面で接続すると、ダウンロード済みのボイスライブラリが話者一覧に表示されます。CLIからも接続を確認できます。
+
+```bash
+speak-voice list-engines
+speak-voice list-speakers --engine voisona
+speak-voice speak "こんにちは" \
+  --engine voisona \
+  --speaker "tanaka-san_ja_JP|2.0.0|ja_JP"
+```
+
+話者IDは環境ごとに異なるため、`list-speakers`が表示した値を指定してください。VoiSona TalkのREST API機能はベータ版です。設定手順と仕様は[公式REST APIチュートリアル](https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb180ea86ccc6c7347e9ca6)も参照してください。
+
+安全のため、VoiSona API URLには`localhost`またはループバックIPアドレスのみ指定できます。認証設定APIもWebコンソールと同一オリジンからのアクセスだけを受け付け、パスワード自体をレスポンスやログへ出力しません。
 
 ### Ollamaを使用する
 
@@ -351,6 +390,8 @@ Base URLは通常`http://localhost:11434/v1`です。Web画面の「再取得」
 - 使用ポートが既定値と異なっていないか確認
 - Voicepeakは実行ファイルの場所を確認
 - Voicepeakの場所を変更する場合は`VOICEPEAK_PATH`環境変数を設定
+- VoiSona Talkを起動・ログインし、環境設定でREST APIが有効になっているか確認
+- `VOISONA_API_USER`、`VOISONA_API_PASSWORD`、`VOISONA_API_PORT`がVoiSona Talk側の設定と一致しているか確認
 
 COEIROINKは軽量な`/v1/engine_info`で起動確認し、画像データを含まない`/v1/speakers_path_variant`から話者一覧を取得します。音声合成にはCOEIROINK v2の`/v1/synthesis`を使用します。
 

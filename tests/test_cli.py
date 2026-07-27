@@ -3,6 +3,10 @@ from unittest.mock import MagicMock, patch
 from speak_voice import cli
 
 
+def test_engine_registry_contains_only_supported_engines():
+    assert set(cli.ENGINES) == {"voicevox", "coeiroink", "voicepeak", "voisona"}
+
+
 def test_hook_posts_text_to_web_server():
     response = MagicMock()
     args = MagicMock(
