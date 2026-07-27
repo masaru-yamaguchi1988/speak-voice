@@ -30,6 +30,7 @@ dev = [
     "mypy>=1.0.0",
     "pip-audit>=2.7.0",
     "fastapi>=0.100.0",
+    "httpx2>=0.0.1",
 ]
 web = [
     "fastapi>=0.100.0",
