@@ -62,6 +62,25 @@ def test_list_engines():
     assert any("key" in item for item in data)
 
 
+def test_voicepeak_diagnostics_endpoint():
+    events = [{"event": "synthesis_attempt_failed", "request_id": "abc123"}]
+    with (
+        patch("speak_voice.web.app.get_voicepeak_events", return_value=events) as get,
+        patch(
+            "speak_voice.web.app.voicepeak_log_path",
+            return_value="/tmp/voicepeak.log",
+        ),
+    ):
+        response = client.get("/api/diagnostics/voicepeak", params={"limit": 10})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "events": events,
+        "log_file": "/tmp/voicepeak.log",
+    }
+    get.assert_called_once_with(10)
+
+
 def test_list_ollama_models_endpoint():
     with patch(
         "speak_voice.web.app.get_ollama_models",
@@ -178,6 +197,15 @@ def test_web_console_contains_voisona_connection_form():
     assert "/api/engine-config/voisona/test" in response.text
 
 
+def test_web_console_contains_voicepeak_diagnostics():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="voicepeak-diagnostics-card"' in response.text
+    assert "/api/diagnostics/voicepeak?limit=30" in response.text
+    assert "読み上げ本文は保存しません" in response.text
+
+
 def test_voicepeak_engine_settings_include_speaker_emotions():
     engine = VoicepeakEngine(executable_path="dummy")
     with (
@@ -267,6 +295,21 @@ def test_speak_without_wait_returns_queued_status():
 
     assert response.status_code == 200
     assert response.json() == {"status": "queued", "queued": True, "completed": False}
+
+
+def test_speak_rejects_symbols_only_before_queueing():
+    response = client.post(
+        "/api/speak",
+        json={
+            "engine": "voicepeak",
+            "speaker": "Miyamai Moca",
+            "text": ": ** 😊",
+            "wait": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "読み上げ可能な文字" in response.json()["detail"]
 
 
 def test_chat_mock_streams_text_and_done_event():

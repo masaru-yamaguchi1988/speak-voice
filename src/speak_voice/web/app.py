@@ -17,6 +17,8 @@ from speak_voice.base import BaseEngine
 from speak_voice.bridge import VoiceAgentBridge
 from speak_voice.cli import ENGINES
 from speak_voice.engines import VoicepeakEngine, VoiSonaEngine
+from speak_voice.text_utils import has_speakable_text
+from speak_voice.voicepeak_diagnostics import get_voicepeak_events, voicepeak_log_path
 from speak_voice.voisona_config import (
     VoiSonaConfig,
     clear_voisona_config,
@@ -343,6 +345,15 @@ def list_engines():
     return result
 
 
+@app.get("/api/diagnostics/voicepeak")
+def voicepeak_diagnostics(limit: int = Query(default=50, ge=1, le=200)):
+    """直近のVOICEPEAK診断イベントと永続ログの保存先を返します。"""
+    return {
+        "events": get_voicepeak_events(limit),
+        "log_file": str(voicepeak_log_path()),
+    }
+
+
 @app.get("/api/models")
 def list_models(provider: str, base_url: Optional[str] = None):
     """ローカルLLMで利用可能なモデル一覧を返します。"""
@@ -413,6 +424,11 @@ def speak_text(req: SpeakRequest):
     engine_key = req.engine.lower()
     if engine_key not in ENGINES:
         raise HTTPException(status_code=400, detail=f"Unknown engine: {req.engine}")
+    if not has_speakable_text(req.text):
+        raise HTTPException(
+            status_code=400,
+            detail="読み上げ可能な文字を含むテキストを指定してください。",
+        )
 
     options = {
         "speed": req.speed,
