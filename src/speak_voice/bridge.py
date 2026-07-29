@@ -5,6 +5,7 @@ from typing import Generator
 
 from speak_voice.base import BaseEngine
 from speak_voice.player import play_wav
+from speak_voice.text_utils import has_speakable_text
 
 
 class VoiceBridgeError(RuntimeError):
@@ -110,17 +111,20 @@ class VoiceAgentBridge:
 
     def speak(self, text: str):
         """文またはテキスト全体を再生キューに追加します。"""
+        clean_text = text.strip()
+        if not has_speakable_text(clean_text):
+            return
         if not self.running:
             self.start()
-        # 空文字でなければキューへ追加
-        clean_text = text.strip()
-        if clean_text:
-            max_length = getattr(self.engine, "max_text_length", None)
-            if isinstance(max_length, int) and max_length > 0:
-                for start in range(0, len(clean_text), max_length):
-                    self.queue.put(clean_text[start : start + max_length])
-            else:
-                self.queue.put(clean_text)
+
+        max_length = getattr(self.engine, "max_text_length", None)
+        if isinstance(max_length, int) and max_length > 0:
+            for start in range(0, len(clean_text), max_length):
+                segment = clean_text[start : start + max_length]
+                if has_speakable_text(segment):
+                    self.queue.put(segment)
+        else:
+            self.queue.put(clean_text)
 
     def speak_stream(self, text_generator: Generator[str, None, None]):
         """ジェネレータ（ストリーミング出力）から随時テキストを受け取り、文単位で切り出してキューに追加します。"""

@@ -106,6 +106,21 @@
         </p>
       </div>
 
+      <!-- VOICEPEAK 診断ログ -->
+      <div id="voicepeak-diagnostics-card" class="engine-config-card" hidden>
+        <div class="engine-config-heading">
+          <label>VOICEPEAK 診断ログ</label>
+          <button id="voicepeak-log-refresh-btn" class="btn btn-secondary compact-btn" type="button">
+            更新
+          </button>
+        </div>
+        <p id="voicepeak-log-status" class="model-status" aria-live="polite"></p>
+        <pre id="voicepeak-log-output" class="diagnostic-log">まだ診断イベントはありません。</pre>
+        <p class="engine-config-note">
+          読み上げ本文は保存しません。エラー表示の診断IDと同じIDで、連続した試行を追跡できます。
+        </p>
+      </div>
+
       <!-- 話者・キャラクター選択 -->
       <div class="form-group">
         <label for="speaker-select">話者 / キャラクター</label>
@@ -380,10 +395,49 @@
       }
     });
 
+    const voicepeakDiagnosticsCard = document.getElementById("voicepeak-diagnostics-card");
+    const voicepeakLogRefreshBtn = document.getElementById("voicepeak-log-refresh-btn");
+    const voicepeakLogStatus = document.getElementById("voicepeak-log-status");
+    const voicepeakLogOutput = document.getElementById("voicepeak-log-output");
+
+    function formatVoicepeakEvent(item) {
+      const time = new Date(item.timestamp).toLocaleTimeString();
+      const id = item.request_id ? ` [${item.request_id}]` : "";
+      const attempt = item.attempt ? ` 試行${item.attempt}` : "";
+      const kind = item.error_kind ? ` ${item.error_kind}` : "";
+      const code = item.exit_code !== undefined ? ` 終了コード=${item.exit_code}` : "";
+      const stderr = item.stderr ? `\n  ${item.stderr}` : "";
+      return `${time} ${item.level.toUpperCase()} ${item.event}${id}${attempt}${kind}${code}${stderr}`;
+    }
+
+    async function loadVoicepeakDiagnostics() {
+      voicepeakLogRefreshBtn.disabled = true;
+      voicepeakLogStatus.textContent = "診断ログを取得中...";
+      try {
+        const resp = await fetch("/api/diagnostics/voicepeak?limit=30");
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.detail || "診断ログを取得できませんでした");
+        voicepeakLogOutput.textContent = result.events.length
+          ? result.events.map(formatVoicepeakEvent).join("\n")
+          : "まだ診断イベントはありません。";
+        voicepeakLogStatus.textContent = `ログファイル: ${result.log_file}`;
+        voicepeakLogOutput.scrollTop = voicepeakLogOutput.scrollHeight;
+      } catch (err) {
+        voicepeakLogStatus.textContent = `取得エラー: ${err.message}`;
+      } finally {
+        voicepeakLogRefreshBtn.disabled = false;
+      }
+    }
+
+    voicepeakLogRefreshBtn.addEventListener("click", loadVoicepeakDiagnostics);
+
     async function updateEngineConfigVisibility() {
       const isVoiSona = engineSelect.value === "voisona";
+      const isVoicepeak = engineSelect.value === "voicepeak";
       voisonaConfigCard.hidden = !isVoiSona;
+      voicepeakDiagnosticsCard.hidden = !isVoicepeak;
       if (isVoiSona) await loadVoiSonaConfig();
+      if (isVoicepeak) await loadVoicepeakDiagnostics();
     }
 
     const slidersGrid = document.getElementById("sliders-grid");

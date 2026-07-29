@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from speak_voice.bridge import SentenceSplitter, VoiceAgentBridge, VoiceBridgeError
+from speak_voice.text_utils import has_speakable_text
 
 
 def test_sentence_splitter_handles_streamed_japanese_sentences():
@@ -12,6 +13,26 @@ def test_sentence_splitter_handles_streamed_japanese_sentences():
     assert splitter.append("こんにちは。次") == ["こんにちは。"]
     assert splitter.append("の文です！残り") == ["次の文です！"]
     assert splitter.flush() == ["残り"]
+
+
+@pytest.mark.parametrize("text", ["こんにちは。", "VOICEPEAK", "123", "A-1"])
+def test_speakable_text_accepts_letters_and_numbers(text):
+    assert has_speakable_text(text) is True
+
+
+@pytest.mark.parametrize("text", ["", " \n", ":", "**", "！？", "😊"])
+def test_speakable_text_rejects_symbols_only(text):
+    assert has_speakable_text(text) is False
+
+
+def test_bridge_does_not_enqueue_symbols_only():
+    engine = MagicMock()
+    bridge = VoiceAgentBridge(engine, speaker_id="1")
+
+    bridge.speak(": ** 😊")
+
+    assert bridge.running is False
+    engine.synthesize_wav.assert_not_called()
 
 
 def test_bridge_raises_synthesis_error_after_queue_finishes():
@@ -78,3 +99,20 @@ def test_bridge_splits_text_to_engine_character_limit():
 
     texts = [call.kwargs["text"] for call in engine.synthesize_wav.call_args_list]
     assert texts == ["12345", "67890", "1"]
+
+
+def test_bridge_does_not_enqueue_symbol_only_segment_after_length_split():
+    engine = MagicMock()
+    engine.max_text_length = 5
+    engine.synthesize_wav.return_value = b"wav"
+    bridge = VoiceAgentBridge(engine, speaker_id="1")
+
+    with patch("speak_voice.bridge.play_wav", return_value=True):
+        try:
+            bridge.speak("12345:::::")
+            bridge.wait_until_done()
+        finally:
+            bridge.stop()
+
+    texts = [call.kwargs["text"] for call in engine.synthesize_wav.call_args_list]
+    assert texts == ["12345"]

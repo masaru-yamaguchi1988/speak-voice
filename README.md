@@ -1,71 +1,43 @@
 # speak-voice
 
-`speak-voice`は、VOICEVOX、COEIROINK、Voicepeakなどの日本語音声合成ソフトを、Python API・CLI・Webコンソールから共通の操作で利用するためのラッパーです。
+`speak-voice`は、複数の日本語音声合成ソフトをCLI・Webコンソール・Pythonから共通の操作で利用するためのラッパーです。
 
-LLMのストリーミング回答を文章単位で順番に読み上げるほか、ブラウザで選択した文章や、他のアプリからコピーした文章をすぐに音声化できます。
+LLMの回答をストリーミング表示しながら読み上げるほか、ブラウザで選択した文章や、他のアプリでコピーした文章も音声化できます。
 
 ## 主な機能
 
-- 複数の音声合成エンジンを共通APIで操作
+- VOICEVOX、COEIROINK、VOICEPEAK、VoiSona Talkに対応
 - OpenAI、Gemini、Ollama、OpenAI互換ローカルLLMとのチャット
-- Ollama／ローカルLLMの利用可能モデルを自動取得して選択
-- LLMの回答を画面へストリーミング表示しながら文単位で読み上げ
-- 停止ボタンやブラウザ切断に連動して、回答生成・再生中の音声・待機キューを停止
-- ブラウザの選択テキストを送るブックマークレット
-- クリップボード、Raycast、Alfred、macOSショートカットなどからの読み上げ
-- macOS、Windows、Linuxの標準機能を利用した音声再生
+- キャラクター／スタイル選択とエンジン別の調声スライダー
+- 回答生成、再生中の音声、待機中の読み上げをまとめて停止
+- ブラウザ、クリップボード、Raycast、Alfredなどから読み上げ
 
-## 対応状況
+## 対応エンジン
 
-| 音声エンジン | キー | 接続方式 | 状況 |
-|---|---|---|---|
-| VOICEVOX | `voicevox` | HTTP API `127.0.0.1:50021` | 対応 |
-| COEIROINK v2 | `coeiroink` | HTTP API `127.0.0.1:50032` | 対応 |
-| Voicepeak | `voicepeak` | 公式CLI | 対応 |
-| VoiSona Talk | `voisona` | REST API `127.0.0.1:32766` | 対応（APIはベータ版） |
-
-| LLMプロバイダー | 用途 | モデル選択 |
+| 音声エンジン | キー | 接続方式 |
 |---|---|---|
-| Ollama | ローカルLLM | `/api/tags`から自動取得 |
-| Local OpenAI | LM Studio、vLLMなど | `/v1/models`から自動取得 |
-| OpenAI | OpenAI API | アプリの既定モデル |
-| Gemini | Google Gemini API | APIから利用可能モデルを探索 |
-| Mock | 接続確認 | APIキー不要 |
+| VOICEVOX | `voicevox` | HTTP API `127.0.0.1:50021` |
+| COEIROINK v2 | `coeiroink` | HTTP API `127.0.0.1:50032` |
+| VOICEPEAK | `voicepeak` | 公式CLI |
+| VoiSona Talk | `voisona` | REST API `127.0.0.1:32766` |
 
-## 必要環境
-
-- Python 3.10以上
-- 使用する音声合成ソフト
-- Webコンソールを使う場合はWeb用の追加依存関係
-- ローカルLLMを使う場合はOllama、LM Studioなど
-
-音声再生には次のOS標準機能または一般的なコマンドを使用します。
-
-- macOS: `afplay`
-- Windows: `winsound`
-- Linux: `aplay`、`paplay`、`play`のいずれか
+Python 3.10以上と、使用する音声合成ソフトが必要です。音声エンジンやローカルLLMの設定は[接続・設定ガイド](docs/configuration.md)を参照してください。
 
 ## クイックスタート
 
 ### 1. インストール
 
-Webコンソールを含めて開発モードでインストールします。
+リポジトリのディレクトリで、Webコンソールを含めてインストールします。
 
 ```bash
 python -m pip install -e ".[web]"
 ```
 
-テスト・整形ツールも入れる場合：
-
-```bash
-python -m pip install -e ".[web,dev]"
-```
-
 ### 2. 音声合成エンジンを起動
 
-たとえばVOICEVOXを使用する場合は、VOICEVOXエディタまたはエンジンを起動します。
+使用する音声合成ソフトを起動します。たとえばVOICEVOXを使う場合は、VOICEVOXエディタまたはエンジンを起動してください。
 
-接続状態はCLIから確認できます。
+接続状態と話者を確認できます。
 
 ```bash
 speak-voice list-engines
@@ -80,171 +52,29 @@ speak-voice-web
 
 ブラウザで[http://127.0.0.1:8000](http://127.0.0.1:8000)を開きます。
 
-## Webコンソール
-
-Webコンソールでは、次の順番で設定します。
+## Webコンソールの使い方
 
 1. LLMプロバイダーを選択
-2. 必要に応じて接続先やAPIキーを入力
-3. ローカルLLMの場合は取得されたモデルをプルダウンから選択
+2. 必要に応じてBase URLやAPIキーを入力
+3. ローカルLLMの場合は「再取得」からモデルを選択
 4. 音声合成エンジンとキャラクター／スタイルを選択
-5. 選択したエンジンに対応する調声スライダーを調整
+5. 話速、音高、抑揚、音量などをスライダーで調整
 6. テスト再生またはチャットを実行
 
-VOICEVOXとCOEIROINKでは、スタイルをキャラクター単位でグループ表示します。調声項目・設定範囲・初期値はエンジンに合わせて自動的に切り替わります。
+文章入力欄ではEnterで改行し、Shift + Enterで送信します。「停止」を押すと、回答生成、再生中の音声、待機中の読み上げをまとめて中断できます。
 
-- VOICEVOX: 話速、音高、抑揚、音量
-- COEIROINK: 話速、音高、抑揚、音量
-- Voicepeak: 話速、音高、音量、利用可能な感情
-- VoiSona Talk: 話速、音高、抑揚、音量
+VoiSona Talkを選択した場合は、画面に表示される接続設定へAPI URL、ユーザー名、API用パスワードを入力してください。詳細は[VoiSona Talkの設定](docs/configuration.md#voisona-talk)を参照してください。
 
-Voicepeakでナレーター固有の感情を取得できる場合は、感情ごとの強さも0～100のスライダーで指定できます。
+## CLIで読み上げる
 
-### VoiSona Talkを使用する
-
-VoiSona Talkを起動してログインし、使用するボイスライブラリをダウンロードします。その後、画面右上のメニューから「編集 → 環境設定 → API」を開き、次を設定してください。
-
-1. API用パスワードを設定
-2. 「REST APIを有効にする」をON
-3. Webコンソールで音声合成エンジンに「VoiSona Talk」を選択
-4. 表示されたAPI URL、ユーザー名、API用パスワードを入力
-5. 「接続テスト」または「接続して使用」を実行
-
-パスワードは標準ではWebサーバーのメモリ内だけに保持され、サーバー終了時に消去されます。「この端末の資格情報ストアに保存する」を選択した場合のみ、macOSキーチェーン、Windows資格情報マネージャー、Linux Secret ServiceなどのOS資格情報ストアへ保存します。ブラウザのLocal Storageには保存しません。
-
-ヘッドレス実行やCLIでは、環境変数も使用できます。
-
-```bash
-export VOISONA_API_USER="VoiSona Talkに表示されたユーザー名"
-export VOISONA_API_PASSWORD="設定したAPI用パスワード"
-export VOISONA_API_PORT="32766"
-```
-
-ポートを含む接続先全体を変更する場合は、`VOISONA_API_URL`を使用できます。
-
-```bash
-export VOISONA_API_URL="http://127.0.0.1:32766/api/talk/v1"
-```
-
-Web画面で接続すると、ダウンロード済みのボイスライブラリが話者一覧に表示されます。CLIからも接続を確認できます。
-
-```bash
-speak-voice list-engines
-speak-voice list-speakers --engine voisona
-speak-voice speak "こんにちは" \
-  --engine voisona \
-  --speaker "tanaka-san_ja_JP|2.0.0|ja_JP"
-```
-
-話者IDは環境ごとに異なるため、`list-speakers`が表示した値を指定してください。VoiSona TalkのREST API機能はベータ版です。設定手順と仕様は[公式REST APIチュートリアル](https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb180ea86ccc6c7347e9ca6)も参照してください。
-
-安全のため、VoiSona API URLには`localhost`またはループバックIPアドレスのみ指定できます。認証設定APIもWebコンソールと同一オリジンからのアクセスだけを受け付け、パスワード自体をレスポンスやログへ出力しません。
-
-### Ollamaを使用する
-
-Ollamaを起動し、少なくとも1つモデルを取得しておきます。
-
-```bash
-ollama list
-ollama pull gemma3
-```
-
-Web画面で次を選択します。
-
-- AIプロバイダー: `Ollama`
-- Base URL: `http://localhost:11434/v1`
-- モデル: 自動取得されたモデルから選択
-
-一覧が更新されない場合は「再取得」を押してください。
-
-### LM Studioなどを使用する
-
-OpenAI互換サーバーを起動し、Web画面で次を選択します。
-
-- AIプロバイダー: `Local OpenAI`
-- Base URL: 例 `http://localhost:1234/v1`
-- モデル: `/v1/models`から取得されたモデル
-
-### 回答と音声を停止する
-
-チャット中に「停止」を押すと、次の処理をまとめて中断します。
-
-- ブラウザでの回答受信
-- サーバー側の回答処理
-- 現在再生中の音声
-- 待機中の読み上げ文章
-
-タブを閉じるなどブラウザとの接続が切れた場合も、サーバー側で検知して停止します。音声合成APIへの実行中リクエストだけは、接続先の処理が戻るまで短時間残ることがあります。
-
-## ブラウザや他のアプリから読み上げる
-
-### ブックマークレット
-
-Webコンソールで音声エンジンと話者を選択し、「選択テキストを読み上げ」をブラウザのブックマークバーへドラッグします。
-
-任意のWebページで文章を選択してブックマークを押すと、ローカルの`speak-voice`へ文章が送られます。文章を選択していない場合は入力ダイアログが表示されます。
-
-Webコンソールは`127.0.0.1`だけで待ち受けますが、ブックマークレット利用のため外部ページからローカルのフックAPIへのPOSTを許可しています。
-
-### クリップボード
-
-文章をコピーしてから実行します。
-
-```bash
-speak-voice-clip --wait
-```
-
-エンジンや話者も指定できます。
-
-```bash
-speak-voice-clip \
-  --engine voicevox \
-  --speaker 2 \
-  --speed 1.1 \
-  --wait
-```
-
-クリップボード取得には次のコマンドを使用します。
-
-- macOS: `pbpaste`
-- Windows: PowerShell `Get-Clipboard`
-- Linux: `wl-paste`、`xclip`、`xsel`のいずれか
-
-このコマンドはRaycast、Alfred、macOSショートカットなどのシェルコマンドとして登録できます。
-
-### テキストを直接送る
-
-```bash
-speak-voice hook "読み上げたい文章" \
-  --engine voicevox \
-  --speaker 2
-```
-
-通常はWebサーバーの`POST /api/hook/speak`へ送信します。Webサーバーへ接続できない場合は、指定した音声エンジンをCLIから直接呼び出して再生を試みます。
-
-## CLI
-
-### エンジンの状態を確認
-
-```bash
-speak-voice list-engines
-```
-
-### 話者を確認
+話者を確認して、文章を再生します。
 
 ```bash
 speak-voice list-speakers --engine voicevox
+speak-voice speak "こんにちは" --engine voicevox --speaker 2
 ```
 
-### 合成して再生
-
-```bash
-speak-voice speak "こんにちは" \
-  --engine voicevox \
-  --speaker 2
-```
-
-調声パラメータを指定できます。
+調声パラメータや保存先も指定できます。
 
 ```bash
 speak-voice speak "少し早口で読み上げます" \
@@ -253,189 +83,35 @@ speak-voice speak "少し早口で読み上げます" \
   --speed 1.2 \
   --pitch 0.05 \
   --intonation 1.1 \
-  --volume 1.0
-```
-
-Voicepeakでは感情パラメータも指定できます。
-
-```bash
-speak-voice speak "とても嬉しいです" \
-  --engine voicepeak \
-  --speaker "Female 1" \
-  --style "happy=100"
-```
-
-### WAVファイルへ保存
-
-```bash
-speak-voice speak "保存する音声です" \
-  --engine voicevox \
-  --speaker 2 \
+  --volume 1.0 \
   --out output.wav
 ```
 
-## セキュリティと依存関係の管理
+## 他のアプリから読み上げる
 
-このリポジトリでは、依存関係の脆弱性を検知するために GitHub Actions 上で `pip-audit` を実行します。
+Webコンソールの「選択テキストを読み上げ」をブックマークバーへ登録すると、Webページで選択した文章を送信できます。
 
-- プッシュまたは PR 時に自動的に脆弱性スキャンを実行
-- 毎週 1 回、定期的に依存関係を確認
-- Dependabot により Python パッケージと GitHub Actions の更新候補を自動的に提案
-
-ローカルでも次のコマンドで確認できます。
+クリップボードの文章を読み上げる場合：
 
 ```bash
-python -m pip install -e ".[dev]"
-pip-audit -r <(python -m pip freeze)
+speak-voice-clip --wait
 ```
 
-## Python API
-
-### 音声を合成して再生
-
-```python
-from speak_voice.engines import VoicevoxEngine
-from speak_voice.player import play_wav
-
-engine = VoicevoxEngine()
-
-if engine.is_available():
-    wav_bytes = engine.synthesize_wav(
-        text="こんにちは、お元気ですか？",
-        speaker_id="2",
-        speed=1.1,
-        pitch=0.05,
-    )
-    play_wav(wav_bytes)
-```
-
-### ストリーミング文章を順番に読み上げる
-
-`VoiceAgentBridge`は、`。`、`！`、`？`、改行を目安に文章を分割し、バックグラウンドで合成・再生します。
-
-```python
-from speak_voice import VoiceAgentBridge
-from speak_voice.engines import VoicevoxEngine
-
-engine = VoicevoxEngine()
-bridge = VoiceAgentBridge(engine, speaker_id="2", speed=1.1)
-
-
-def text_stream():
-    yield "最初の文章です。"
-    yield "続いて、二つ目の文章です。"
-
-
-try:
-    bridge.speak_stream(text_stream())
-    bridge.wait_until_done()
-finally:
-    bridge.stop()
-```
-
-再生完了を待つ場合は、`bridge.stop()`の前に`bridge.wait_until_done()`を呼んでください。途中で止める場合は`bridge.cancel()`を使用できます。
-
-```python
-bridge.cancel()
-bridge.stop()
-```
-
-音声合成または再生に失敗した場合、`wait_until_done()`は`VoiceBridgeError`を送出します。
-
-## Web API
-
-主なエンドポイント：
-
-| メソッド | パス | 用途 |
-|---|---|---|
-| GET | `/api/engines` | 音声エンジンと起動状態 |
-| GET | `/api/speakers?engine=voicevox` | 話者一覧 |
-| GET | `/api/models` | ローカルLLMのモデル一覧 |
-| POST | `/api/speak` | 音声合成・再生 |
-| POST | `/api/hook/speak` | 外部アプリ向け読み上げ |
-| POST | `/api/chat` | LLM回答のストリーミング表示・読み上げ |
-
-フックAPIの例：
+テキストを直接送る場合：
 
 ```bash
-curl http://127.0.0.1:8000/api/hook/speak \
-  -H "Content-Type: application/json" \
-  -d '{
-    "engine": "voicevox",
-    "speaker": "2",
-    "text": "APIから読み上げます",
-    "speed": 1.1,
-    "wait": false
-  }'
+speak-voice hook "読み上げたい文章" --engine voicevox --speaker 2
 ```
 
-`wait: false`ではキュー投入後すぐに応答します。`wait: true`では再生完了まで待ち、合成・再生エラーをHTTPエラーとして返します。
+Raycast、Alfred、macOSショートカットなどへの登録方法は[外部アプリ連携](docs/external-apps.md)を参照してください。
 
-## トラブルシューティング
+## 詳細ドキュメント
 
-### Ollamaで404になる
-
-Ollamaが起動していても、指定モデルが未取得の場合は404になります。
-
-```bash
-ollama list
-ollama pull gemma3
-```
-
-Base URLは通常`http://localhost:11434/v1`です。Web画面の「再取得」でモデルが表示されることを確認してください。
-
-### 音声エンジンが「無効」と表示される
-
-- VOICEVOXまたはCOEIROINKのエディタ／エンジンが起動しているか確認
-- 使用ポートが既定値と異なっていないか確認
-- Voicepeakは実行ファイルの場所を確認
-- Voicepeakの場所を変更する場合は`VOICEPEAK_PATH`環境変数を設定
-- VoiSona Talkを起動・ログインし、環境設定でREST APIが有効になっているか確認
-- `VOISONA_API_USER`、`VOISONA_API_PASSWORD`、`VOISONA_API_PORT`がVoiSona Talk側の設定と一致しているか確認
-
-COEIROINKは軽量な`/v1/engine_info`で起動確認し、画像データを含まない`/v1/speakers_path_variant`から話者一覧を取得します。音声合成にはCOEIROINK v2の`/v1/synthesis`を使用します。
-
-### Linuxで音声が再生されない
-
-`aplay`、`paplay`、`play`のいずれかをインストールしてください。
-
-### クリップボードを取得できない
-
-Linuxでは環境に合わせて`wl-paste`、`xclip`、`xsel`のいずれかをインストールしてください。
-
-### Python APIの読み上げが途中で切れる
-
-`bridge.stop()`の前に`bridge.wait_until_done()`を呼び出してください。
-
-```python
-bridge.wait_until_done()
-bridge.stop()
-```
-
-## 開発
-
-### テスト
-
-```bash
-pytest
-```
-
-### CIと整形
-
-CIはLinux、macOS、Windows上のPython 3.10～3.12で次を確認します。
-
-```bash
-black --check src tests
-isort --check src tests
-pytest
-```
-
-ローカルで整形する場合：
-
-```bash
-black src tests
-isort src tests
-```
+- [音声エンジンとLLMの接続・設定](docs/configuration.md)
+- [ブラウザ・クリップボード・外部アプリ連携](docs/external-apps.md)
+- [Python API・Web API](docs/api.md)
+- [トラブルシューティング](docs/troubleshooting.md)
+- [開発・テスト・依存関係管理](docs/development.md)
 
 ## ライセンス
 
