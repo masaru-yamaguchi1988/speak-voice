@@ -520,14 +520,16 @@
           container.className = "slider-container emotion-slider";
           container.innerHTML = `
             <div class="slider-header">
-              <span class="slider-title">感情: ${emotion}</span>
+              <span class="slider-title"></span>
               <span class="slider-value">0</span>
             </div>
-            <input type="range" data-emotion="${emotion}" min="0" max="100" step="1" value="0">
+            <input type="range" min="0" max="100" step="1" value="0">
             <div class="slider-range"><span>0</span><span>100</span></div>
           `;
           const input = container.querySelector("input");
           const value = container.querySelector(".slider-value");
+          container.querySelector(".slider-title").textContent = `感情: ${emotion}`;
+          input.dataset.emotion = emotion;
           input.addEventListener("input", () => {
             value.textContent = input.value;
             updateBookmarklet();
@@ -535,14 +537,43 @@
           slidersGrid.appendChild(container);
         });
 
-        if (settings.parameters.length === 0 && settings.emotions.length === 0) {
+        (settings.styles || []).forEach(styleName => {
+          const container = document.createElement("div");
+          container.className = "slider-container emotion-slider";
+          container.innerHTML = `
+            <div class="slider-header">
+              <span class="slider-title"></span>
+              <span class="slider-value">0%</span>
+            </div>
+            <input type="range" min="0" max="100" step="1" value="0">
+            <div class="slider-range"><span>0%</span><span>100%</span></div>
+          `;
+          const input = container.querySelector("input");
+          const value = container.querySelector(".slider-value");
+          container.querySelector(".slider-title").textContent = `スタイル: ${styleName}`;
+          input.dataset.styleWeight = styleName;
+          input.addEventListener("input", () => {
+            value.textContent = `${input.value}%`;
+            updateBookmarklet();
+          });
+          slidersGrid.appendChild(container);
+        });
+
+        if (
+          settings.parameters.length === 0 &&
+          settings.emotions.length === 0 &&
+          (settings.styles || []).length === 0
+        ) {
           parameterStatus.textContent = "このエンジンで設定可能な調声項目はありません。";
         } else {
           const emotionText = settings.emotions.length
             ? `・感情${settings.emotions.length}種類`
             : "";
+          const styleText = (settings.styles || []).length
+            ? `・固有スタイル${settings.styles.length}種類`
+            : "";
           parameterStatus.textContent =
-            `${settings.parameters.length}個の調声項目${emotionText}を利用できます。`;
+            `${settings.parameters.length}個の調声項目${emotionText}${styleText}を利用できます。`;
         }
         updateBookmarklet();
       } catch (err) {
@@ -657,7 +688,10 @@
         pitch: null,
         intonation: null,
         volume: null,
-        style: null
+        style: null,
+        alp: null,
+        huskiness: null,
+        style_weights: {}
       };
       document.querySelectorAll("[data-tuning-param]").forEach(input => {
         params[input.dataset.tuningParam] = parseFloat(input.value);
@@ -666,6 +700,9 @@
         .filter(input => Number(input.value) > 0)
         .map(input => `${input.dataset.emotion}=${input.value}`);
       params.style = emotions.length ? emotions.join(",") : null;
+      document.querySelectorAll("[data-style-weight]").forEach(input => {
+        params.style_weights[input.dataset.styleWeight] = Number(input.value) / 100;
+      });
       return params;
     }
 
@@ -680,6 +717,9 @@
         intonation: params.intonation,
         volume: params.volume,
         style: params.style,
+        alp: params.alp,
+        huskiness: params.huskiness,
+        style_weights: params.style_weights,
         wait: false
       };
       const code = `javascript:(()=>{const t=window.getSelection().toString().trim()||prompt('読み上げるテキストを入力してください');if(!t)return;fetch(${JSON.stringify(endpoint)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...${JSON.stringify(payload)},text:t})}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status)}).catch(e=>alert('speak-voiceへ送信できません: '+e.message))})()`;

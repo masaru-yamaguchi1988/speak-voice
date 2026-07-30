@@ -69,6 +69,8 @@ speak-voice speak "こんにちは" \
 
 安全のため、VoiSona API URLには`localhost`またはループバックIPアドレスだけを指定できます。認証設定APIも同一オリジンからのアクセスだけを受け付け、パスワードをレスポンスやログへ出力しません。
 
+接続後に話者を選ぶと、Webコンソールへ年齢感（ALP）、ハスキー（HUS）と、そのボイスライブラリが提供する固有スタイルのスライダーが表示されます。スタイルは複数を混ぜて指定できます。利用できるスタイル名と種類はボイスライブラリによって異なります。
+
 VoiSona TalkのREST APIはベータ版です。詳細は[公式REST APIチュートリアル](https://manual.voisona.com/ja/talk/pc/2b6e9bc7efb180ea86ccc6c7347e9ca6)を参照してください。
 
 ## LLM

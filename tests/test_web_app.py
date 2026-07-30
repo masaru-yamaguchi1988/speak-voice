@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from speak_voice.engines import VoicepeakEngine
+from speak_voice.engines import VoicepeakEngine, VoiSonaEngine
 from speak_voice.voisona_config import VoiSonaConfig
 from speak_voice.web.app import (
     ChatRequest,
@@ -168,9 +168,31 @@ def test_voisona_engine_settings_match_global_parameters():
         "pitch",
         "intonation",
         "volume",
+        "alp",
+        "huskiness",
     ]
     volume = next(item for item in data["parameters"] if item["id"] == "volume")
     assert volume["default"] == 0.0
+    huskiness = next(item for item in data["parameters"] if item["id"] == "huskiness")
+    assert huskiness["min"] == 0.0
+    assert huskiness["max"] == 1.0
+
+
+def test_voisona_engine_settings_include_voice_specific_styles():
+    engine = MagicMock(spec=VoiSonaEngine)
+    engine.get_styles.return_value = ["Normal", "Happy", "Angry"]
+    with patch.dict(
+        "speak_voice.web.app.ENGINES",
+        {"voisona": lambda: engine},
+        clear=True,
+    ):
+        response = client.get(
+            "/api/engine-settings",
+            params={"engine": "voisona", "speaker": "voice|1.0.0|ja_JP"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["styles"] == ["Normal", "Happy", "Angry"]
 
 
 def test_voisona_config_update_tests_connection_without_exposing_password():
@@ -273,6 +295,15 @@ def test_grouped_speaker_option_includes_character_and_style():
 
     assert response.status_code == 200
     assert "opt.textContent = `${sp.speaker_name} - ${sp.style_name}`;" in response.text
+
+
+def test_web_console_builds_voice_specific_style_sliders():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "input.dataset.styleWeight = styleName;" in response.text
+    assert 'document.querySelectorAll("[data-style-weight]")' in response.text
+    assert "params.style_weights[input.dataset.styleWeight]" in response.text
 
 
 def test_chat_input_supports_multiline_and_shift_enter_send():

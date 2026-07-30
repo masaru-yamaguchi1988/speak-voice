@@ -2,6 +2,7 @@ import os
 import tempfile
 import time
 from typing import List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -116,6 +117,45 @@ class VoiSonaEngine(BaseEngine):
         except (requests.RequestException, ValueError, TypeError):
             return []
 
+    @staticmethod
+    def _style_name(style: object, language: str) -> Optional[str]:
+        if isinstance(style, str):
+            return style
+        if not isinstance(style, dict):
+            return None
+        display_names = style.get("display_names") or []
+        localized = next(
+            (
+                item.get("name")
+                for item in display_names
+                if isinstance(item, dict) and item.get("language") == language and item.get("name")
+            ),
+            None,
+        )
+        return localized or style.get("style_name") or style.get("name") or style.get("id")
+
+    def get_styles(self, speaker_id: str) -> list[str]:
+        """ボイスライブラリ固有の感情・発話スタイルをAPI定義順で返す。"""
+        if not self._has_credentials():
+            return []
+        voice_name, voice_version, language = self._parse_speaker_id(speaker_id)
+        try:
+            response = requests.get(
+                self.base_url
+                + f"voices/{quote(voice_name, safe='')}/{quote(voice_version, safe='')}",
+                auth=self._auth,
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            detail = response.json()
+            if isinstance(detail.get("item"), dict):
+                detail = detail["item"]
+            raw_styles = detail.get("styles") or detail.get("style_names") or []
+            styles = [self._style_name(style, language) for style in raw_styles]
+            return [str(style) for style in styles if style]
+        except (requests.RequestException, ValueError, TypeError):
+            return []
+
     def _wait_for_synthesis(self, request_id: str) -> None:
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
@@ -164,12 +204,15 @@ class VoiSonaEngine(BaseEngine):
             "output_file_path": os.path.abspath(output_path),
             "can_overwrite_file": True,
             "global_parameters": {
-                "alp": 0.0,
-                "huskiness": 0.0,
+                "alp": float(0.0 if kwargs.get("alp") is None else kwargs["alp"]),
+                "huskiness": float(0.0 if kwargs.get("huskiness") is None else kwargs["huskiness"]),
                 "intonation": 1.0 if intonation is None else intonation,
                 "pitch": 0.0 if pitch is None else pitch,
                 "speed": 1.0 if speed is None else speed,
-                "style_weights": [],
+                "style_weights": self._style_weights(
+                    speaker_id,
+                    kwargs.get("style_weights"),
+                ),
                 "volume": 0.0 if volume is None else volume,
             },
         }
@@ -204,3 +247,11 @@ class VoiSonaEngine(BaseEngine):
                 os.remove(output_path)
             except OSError:
                 pass
+
+    def _style_weights(self, speaker_id: str, weights: object) -> list[float]:
+        if isinstance(weights, list):
+            return [max(0.0, min(1.0, float(value))) for value in weights]
+        if not isinstance(weights, dict) or not weights:
+            return []
+        styles = self.get_styles(speaker_id)
+        return [max(0.0, min(1.0, float(weights.get(style, 0.0)))) for style in styles]

@@ -82,6 +82,9 @@ def speak_worker():
                 intonation=options.get("intonation"),
                 volume=options.get("volume"),
                 style=options.get("style"),
+                alp=options.get("alp"),
+                huskiness=options.get("huskiness"),
+                style_weights=options.get("style_weights"),
             )
             from speak_voice.player import play_wav
 
@@ -144,6 +147,22 @@ ENGINE_PARAMETERS = {
             "default": 1.0,
         },
         {"id": "volume", "label": "音量", "min": -10.0, "max": 10.0, "step": 0.5, "default": 0.0},
+        {
+            "id": "alp",
+            "label": "年齢感（ALP）",
+            "min": -1.0,
+            "max": 1.0,
+            "step": 0.05,
+            "default": 0.0,
+        },
+        {
+            "id": "huskiness",
+            "label": "ハスキー（HUS）",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "default": 0.0,
+        },
     ],
 }
 
@@ -194,6 +213,9 @@ class SpeakRequest(BaseModel):
     intonation: Optional[float] = None
     volume: Optional[float] = None
     style: Optional[str] = None
+    alp: Optional[float] = None
+    huskiness: Optional[float] = None
+    style_weights: dict[str, float] = Field(default_factory=dict)
     sanitize_for_speech: bool = False
     wait: Optional[bool] = False  # 再生完了まで待機するかどうか
 
@@ -221,6 +243,9 @@ class ChatRequest(BaseModel):
     intonation: Optional[float] = None
     volume: Optional[float] = None
     style: Optional[str] = None
+    alp: Optional[float] = None
+    huskiness: Optional[float] = None
+    style_weights: dict[str, float] = Field(default_factory=dict)
 
 
 def build_chat_messages(req: ChatRequest) -> list[dict[str, str]]:
@@ -417,14 +442,20 @@ def engine_settings(engine: str, speaker: Optional[str] = None):
         raise HTTPException(status_code=400, detail=f"Unknown engine: {engine}")
 
     emotions = []
+    styles = []
     if engine_key == "voicepeak" and speaker:
         instance = ENGINES[engine_key]()
         if isinstance(instance, VoicepeakEngine):
             emotions = instance.get_emotions(speaker)
+    elif engine_key == "voisona" and speaker:
+        instance = ENGINES[engine_key]()
+        if isinstance(instance, VoiSonaEngine):
+            styles = instance.get_styles(speaker)
 
     return {
         "parameters": ENGINE_PARAMETERS[engine_key],
         "emotions": emotions,
+        "styles": styles,
     }
 
 
@@ -472,6 +503,9 @@ def speak_text(req: SpeakRequest):
         "intonation": req.intonation,
         "volume": req.volume,
         "style": req.style,
+        "alp": req.alp,
+        "huskiness": req.huskiness,
+        "style_weights": req.style_weights,
     }
 
     result = SpeakResult() if req.wait else None
@@ -517,6 +551,9 @@ def chat_and_speak(req: ChatRequest, request: Request):
                 intonation=req.intonation,
                 volume=req.volume,
                 style=req.style,
+                alp=req.alp,
+                huskiness=req.huskiness,
+                style_weights=req.style_weights,
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to initialize voice bridge: {str(e)}")
