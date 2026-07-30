@@ -177,14 +177,49 @@
 
     <!-- 右側: チャット対話コンソール -->
     <div class="panel chat-output-panel">
-      <h2>AIエージェント対話</h2>
+      <div class="chat-heading">
+        <h2>AIエージェント対話</h2>
+        <div class="chat-toolbar">
+          <select id="conversation-select" aria-label="会話履歴">
+            <option value="">新しい会話</option>
+          </select>
+          <button id="new-chat-btn" class="btn btn-secondary compact-btn" type="button">新規</button>
+          <button id="export-chat-btn" class="btn btn-secondary compact-btn" type="button">書き出し</button>
+          <button id="delete-chat-btn" class="btn btn-danger compact-btn" type="button">削除</button>
+        </div>
+      </div>
+
+      <details class="system-prompt-panel">
+        <summary>固定プロンプト・履歴設定</summary>
+        <label class="remember-setting">
+          <input type="checkbox" id="system-prompt-enabled">
+          <span>固定プロンプトを使用する</span>
+        </label>
+        <textarea
+          id="system-prompt-input"
+          rows="4"
+          placeholder="例：日本語で簡潔に、音声で聞きやすい文章として回答してください。"
+        ></textarea>
+        <div class="prompt-preset-row">
+          <select id="prompt-preset-select" aria-label="固定プロンプトのプリセット">
+            <option value="">プリセットを選択</option>
+          </select>
+          <button id="save-preset-btn" class="btn btn-secondary compact-btn" type="button">保存</button>
+          <button id="delete-preset-btn" class="btn btn-danger compact-btn" type="button">削除</button>
+        </div>
+        <label class="remember-setting">
+          <input type="checkbox" id="persist-history" checked>
+          <span>会話履歴をこのブラウザへ保存する（APIキーは保存しません）</span>
+        </label>
+        <label class="remember-setting">
+          <input type="checkbox" id="auto-speak-response" checked>
+          <span>新しい回答を自動で読み上げる</span>
+        </label>
+      </details>
       
       <!-- メッセージ履歴 -->
       <div id="chat-messages" class="chat-messages">
-        <div class="message assistant">
-          音声合成コンソールへようこそ！ローカルLLM（Ollama等）を利用すればAPI費用0円で会話読み上げが可能です。<br>
-          調声パラメータを調整して、下のチャットボックスから話しかけてください。
-        </div>
+        <!-- JSで会話履歴を描画します -->
       </div>
 
       <!-- チャット入力エリア -->
@@ -702,22 +737,166 @@
       }
     });
 
-    // チャットメッセージ表示ヘルパー
+    // チャット状態・履歴
     const chatMessages = document.getElementById("chat-messages");
-    function appendMessage(sender, text) {
-      const msgDiv = document.createElement("div");
-      msgDiv.className = `message ${sender}`;
-      msgDiv.textContent = text;
-      chatMessages.appendChild(msgDiv);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-      return msgDiv;
-    }
-
-    // チャット送信
     const chatInput = document.getElementById("chat-input");
     const chatSendBtn = document.getElementById("chat-send-btn");
     const chatStopBtn = document.getElementById("chat-stop-btn");
+    const conversationSelect = document.getElementById("conversation-select");
+    const newChatBtn = document.getElementById("new-chat-btn");
+    const exportChatBtn = document.getElementById("export-chat-btn");
+    const deleteChatBtn = document.getElementById("delete-chat-btn");
+    const systemPromptEnabled = document.getElementById("system-prompt-enabled");
+    const systemPromptInput = document.getElementById("system-prompt-input");
+    const promptPresetSelect = document.getElementById("prompt-preset-select");
+    const savePresetBtn = document.getElementById("save-preset-btn");
+    const deletePresetBtn = document.getElementById("delete-preset-btn");
+    const persistHistory = document.getElementById("persist-history");
+    const autoSpeakResponse = document.getElementById("auto-speak-response");
     let activeChatController = null;
+    let chatDatabase = null;
+    let currentConversation = createConversation();
+
+    function createId() {
+      return window.crypto?.randomUUID?.() ||
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    function createConversation() {
+      const now = new Date().toISOString();
+      return { id: createId(), title: "新しい会話", messages: [], createdAt: now, updatedAt: now };
+    }
+
+    function openChatDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open("speak-voice-chat", 1);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains("conversations")) {
+            database.createObjectStore("conversations", { keyPath: "id" });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    function databaseRequest(mode, operation) {
+      if (!chatDatabase) return Promise.resolve(null);
+      return new Promise((resolve, reject) => {
+        const transaction = chatDatabase.transaction("conversations", mode);
+        const request = operation(transaction.objectStore("conversations"));
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function saveCurrentConversation() {
+      currentConversation.updatedAt = new Date().toISOString();
+      if (!persistHistory.checked || currentConversation.messages.length === 0) return;
+      await databaseRequest("readwrite", store => store.put(currentConversation));
+      await refreshConversationList();
+    }
+
+    async function refreshConversationList() {
+      const conversations = await databaseRequest("readonly", store => store.getAll()) || [];
+      conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      conversationSelect.innerHTML = '<option value="">新しい会話</option>';
+      conversations.forEach(conversation => {
+        const option = document.createElement("option");
+        option.value = conversation.id;
+        option.textContent = conversation.title;
+        conversationSelect.appendChild(option);
+      });
+      conversationSelect.value = conversations.some(item => item.id === currentConversation.id)
+        ? currentConversation.id
+        : "";
+    }
+
+    function createMessage(role, content) {
+      return { id: createId(), role, content, createdAt: new Date().toISOString() };
+    }
+
+    function renderMessages() {
+      chatMessages.innerHTML = "";
+      if (currentConversation.messages.length === 0) {
+        const welcome = document.createElement("div");
+        welcome.className = "message assistant";
+        welcome.textContent =
+          "音声合成コンソールへようこそ。固定プロンプトや履歴を設定して会話を始められます。";
+        chatMessages.appendChild(welcome);
+        return;
+      }
+      currentConversation.messages.forEach((message, index) => {
+        appendMessageElement(message.role, message.content, index);
+      });
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function appendMessageElement(role, text, index = null, transient = false) {
+      const row = document.createElement("div");
+      row.className = `message-row ${role}`;
+      const bubble = document.createElement("div");
+      bubble.className = `message ${role} message-content`;
+      bubble.textContent = text;
+      row.appendChild(bubble);
+
+      if (!transient && index !== null) {
+        const actions = document.createElement("div");
+        actions.className = "message-actions";
+        const items = role === "assistant"
+          ? [["copy", "コピー"], ["speak", "読み上げ"], ["regenerate", "再生成"], ["delete", "削除"]]
+          : [["copy", "コピー"], ["edit", "編集"], ["delete", "削除"]];
+        items.forEach(([action, label]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "message-action";
+          button.textContent = label;
+          button.addEventListener("click", () => handleMessageAction(action, index));
+          actions.appendChild(button);
+        });
+        row.appendChild(actions);
+      }
+      chatMessages.appendChild(row);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return { row, bubble };
+    }
+
+    async function handleMessageAction(action, index) {
+      const message = currentConversation.messages[index];
+      if (!message) return;
+      if (action === "copy") {
+        await navigator.clipboard.writeText(message.content);
+      } else if (action === "speak") {
+        const params = getTuningParams();
+        if (!params.speaker) return alert("話者を選択してください");
+        await fetch("/api/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...params, text: message.content, sanitize_for_speech: true })
+        });
+      } else if (action === "edit") {
+        chatInput.value = message.content;
+        currentConversation.messages = currentConversation.messages.slice(0, index);
+        renderMessages();
+        resizeChatInput();
+        chatInput.focus();
+        await saveCurrentConversation();
+      } else if (action === "regenerate") {
+        let userIndex = index - 1;
+        while (userIndex >= 0 && currentConversation.messages[userIndex].role !== "user") userIndex--;
+        if (userIndex >= 0) {
+          const prompt = currentConversation.messages[userIndex].content;
+          currentConversation.messages = currentConversation.messages.slice(0, userIndex);
+          renderMessages();
+          await sendChat(prompt);
+        }
+      } else if (action === "delete") {
+        currentConversation.messages.splice(index, 1);
+        renderMessages();
+        await saveCurrentConversation();
+      }
+    }
 
     function resizeChatInput() {
       chatInput.style.height = "auto";
@@ -730,12 +909,12 @@
       }
     });
 
-    async function sendChat() {
-      const prompt = chatInput.value.trim();
+    async function sendChat(promptOverride = null) {
+      const prompt = (promptOverride ?? chatInput.value).trim();
       if (!prompt) return;
 
       const params = getTuningParams();
-      if (!params.speaker) {
+      if (autoSpeakResponse.checked && !params.speaker) {
         alert("話者を選択してください");
         return;
       }
@@ -765,8 +944,15 @@
         apiKey = geminiKey;
       }
 
-      // ユーザーメッセージを追加
-      appendMessage("user", prompt);
+      const historyForRequest = currentConversation.messages
+        .slice(-40)
+        .map(({ role, content }) => ({ role, content }));
+      currentConversation.messages.push(createMessage("user", prompt));
+      if (currentConversation.title === "新しい会話") {
+        currentConversation.title = prompt.replace(/\s+/g, " ").slice(0, 32);
+      }
+      renderMessages();
+      await saveCurrentConversation();
       chatInput.value = "";
       resizeChatInput();
 
@@ -777,7 +963,9 @@
       activeChatController = new AbortController();
       
       // AI返答用プレースホルダーメッセージを作成
-      const responseMsgDiv = appendMessage("assistant", "考え中...");
+      const responseElement = appendMessageElement("assistant", "考え中...", null, true);
+      const responseMsgDiv = responseElement.bubble;
+      let responseText = "";
 
       try {
         const resp = await fetch("/api/chat", {
@@ -790,7 +978,10 @@
             api_provider: apiProvider,
             api_key: apiKey,
             base_url: baseUrl,
-            model_name: modelName
+            model_name: modelName,
+            system_prompt: systemPromptEnabled.checked ? systemPromptInput.value.trim() : null,
+            messages: historyForRequest,
+            auto_speak: autoSpeakResponse.checked
           })
         });
 
@@ -818,7 +1009,8 @@
             if (!line.trim()) continue;
             const event = JSON.parse(line);
             if (event.type === "text") {
-              responseMsgDiv.textContent += event.text;
+              responseText += event.text;
+              responseMsgDiv.textContent = responseText;
               chatMessages.scrollTop = chatMessages.scrollHeight;
             } else if (event.type === "error") {
               throw new Error(event.detail);
@@ -829,13 +1021,19 @@
         }
       } catch (err) {
         if (err.name === "AbortError") {
-          responseMsgDiv.textContent += "\n（回答と音声再生を停止しました）";
+          responseText += "\n（回答と音声再生を停止しました）";
+          responseMsgDiv.textContent = responseText;
         } else {
           responseMsgDiv.className = "message system";
           responseMsgDiv.textContent = `エラー: ${err.message}`;
           console.error(err);
         }
       } finally {
+        if (responseText.trim()) {
+          currentConversation.messages.push(createMessage("assistant", responseText.trim()));
+          await saveCurrentConversation();
+          renderMessages();
+        }
         activeChatController = null;
         chatSendBtn.disabled = false;
         chatStopBtn.disabled = true;
@@ -843,7 +1041,7 @@
       }
     }
 
-    chatSendBtn.addEventListener("click", sendChat);
+    chatSendBtn.addEventListener("click", () => sendChat());
     chatInput.addEventListener("input", resizeChatInput);
     chatInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.shiftKey && !e.isComposing) {
@@ -852,9 +1050,132 @@
       }
     });
 
+    newChatBtn.addEventListener("click", () => {
+      activeChatController?.abort();
+      currentConversation = createConversation();
+      conversationSelect.value = "";
+      renderMessages();
+      chatInput.focus();
+    });
+
+    conversationSelect.addEventListener("change", async () => {
+      if (!conversationSelect.value) {
+        currentConversation = createConversation();
+      } else {
+        const stored = await databaseRequest(
+          "readonly",
+          store => store.get(conversationSelect.value)
+        );
+        if (stored) currentConversation = stored;
+      }
+      renderMessages();
+    });
+
+    deleteChatBtn.addEventListener("click", async () => {
+      if (!window.confirm("この会話を削除しますか？")) return;
+      await databaseRequest("readwrite", store => store.delete(currentConversation.id));
+      currentConversation = createConversation();
+      renderMessages();
+      await refreshConversationList();
+    });
+
+    exportChatBtn.addEventListener("click", () => {
+      const markdown = currentConversation.messages
+        .map(message => `## ${message.role === "user" ? "ユーザー" : "アシスタント"}\n\n${message.content}`)
+        .join("\n\n");
+      const blob = new Blob([`# ${currentConversation.title}\n\n${markdown}\n`], {
+        type: "text/markdown;charset=utf-8"
+      });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${currentConversation.title || "chat"}.md`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+
+    function loadPromptPresets() {
+      const presets = JSON.parse(localStorage.getItem("speakVoicePromptPresets") || "[]");
+      promptPresetSelect.innerHTML = '<option value="">プリセットを選択</option>';
+      presets.forEach(preset => {
+        const option = document.createElement("option");
+        option.value = preset.id;
+        option.textContent = preset.name;
+        promptPresetSelect.appendChild(option);
+      });
+      return presets;
+    }
+
+    promptPresetSelect.addEventListener("change", () => {
+      const selectedId = promptPresetSelect.value;
+      const presets = JSON.parse(localStorage.getItem("speakVoicePromptPresets") || "[]");
+      const preset = presets.find(item => item.id === selectedId);
+      if (preset) {
+        systemPromptInput.value = preset.content;
+        systemPromptEnabled.checked = true;
+      }
+    });
+
+    savePresetBtn.addEventListener("click", () => {
+      const content = systemPromptInput.value.trim();
+      if (!content) return alert("固定プロンプトを入力してください");
+      const name = window.prompt("プリセット名を入力してください");
+      if (!name?.trim()) return;
+      const presets = loadPromptPresets();
+      presets.push({ id: createId(), name: name.trim(), content });
+      localStorage.setItem("speakVoicePromptPresets", JSON.stringify(presets));
+      loadPromptPresets();
+    });
+
+    deletePresetBtn.addEventListener("click", () => {
+      const selectedId = promptPresetSelect.value;
+      if (!selectedId) return;
+      const presets = JSON.parse(localStorage.getItem("speakVoicePromptPresets") || "[]")
+        .filter(item => item.id !== selectedId);
+      localStorage.setItem("speakVoicePromptPresets", JSON.stringify(presets));
+      loadPromptPresets();
+    });
+
+    systemPromptInput.addEventListener("input", () => {
+      localStorage.setItem("speakVoiceSystemPrompt", systemPromptInput.value);
+    });
+    systemPromptEnabled.addEventListener("change", () => {
+      localStorage.setItem("speakVoiceSystemPromptEnabled", String(systemPromptEnabled.checked));
+    });
+    persistHistory.addEventListener("change", async () => {
+      localStorage.setItem("speakVoicePersistHistory", String(persistHistory.checked));
+      if (!persistHistory.checked) {
+        await databaseRequest("readwrite", store => store.delete(currentConversation.id));
+        await refreshConversationList();
+      } else {
+        await saveCurrentConversation();
+      }
+    });
+    autoSpeakResponse.addEventListener("change", () => {
+      localStorage.setItem("speakVoiceAutoSpeak", String(autoSpeakResponse.checked));
+    });
+
+    async function initializeChat() {
+      systemPromptInput.value = localStorage.getItem("speakVoiceSystemPrompt") || "";
+      systemPromptEnabled.checked =
+        localStorage.getItem("speakVoiceSystemPromptEnabled") === "true";
+      persistHistory.checked = localStorage.getItem("speakVoicePersistHistory") !== "false";
+      autoSpeakResponse.checked = localStorage.getItem("speakVoiceAutoSpeak") !== "false";
+      loadPromptPresets();
+      renderMessages();
+      try {
+        chatDatabase = await openChatDatabase();
+        await refreshConversationList();
+      } catch (error) {
+        persistHistory.checked = false;
+        persistHistory.disabled = true;
+        console.warn("会話履歴データベースを利用できません", error);
+      }
+    }
+
     // 初期化ロード
     loadEngines();
     loadModels();
+    initializeChat();
   </script>
 </body>
 </html>

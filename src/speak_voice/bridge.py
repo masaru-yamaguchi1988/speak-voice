@@ -5,7 +5,11 @@ from typing import Generator
 
 from speak_voice.base import BaseEngine
 from speak_voice.player import play_wav
-from speak_voice.text_utils import has_speakable_text
+from speak_voice.text_utils import (
+    StreamingSpeechFilter,
+    has_speakable_text,
+    prepare_text_for_speech,
+)
 
 
 class VoiceBridgeError(RuntimeError):
@@ -111,7 +115,7 @@ class VoiceAgentBridge:
 
     def speak(self, text: str):
         """文またはテキスト全体を再生キューに追加します。"""
-        clean_text = text.strip()
+        clean_text = prepare_text_for_speech(text)
         if not has_speakable_text(clean_text):
             return
         if not self.running:
@@ -132,15 +136,17 @@ class VoiceAgentBridge:
             self.start()
 
         splitter = SentenceSplitter()
+        speech_filter = StreamingSpeechFilter()
         for chunk in text_generator:
             if self._cancel_event.is_set():
                 break
-            sentences = splitter.append(chunk)
+            sentences = splitter.append(speech_filter.feed(chunk))
             for sentence in sentences:
                 self.speak(sentence)
 
         # 最後にバッファに残ったテキストをフラッシュして発話
         if not self._cancel_event.is_set():
+            speech_filter.flush()
             for sentence in splitter.flush():
                 self.speak(sentence)
 

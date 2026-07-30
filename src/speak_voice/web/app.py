@@ -4,20 +4,20 @@ import os
 import queue
 import threading
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from speak_voice.base import BaseEngine
 from speak_voice.bridge import VoiceAgentBridge
 from speak_voice.cli import ENGINES
 from speak_voice.engines import VoicepeakEngine, VoiSonaEngine
-from speak_voice.text_utils import has_speakable_text
+from speak_voice.text_utils import has_speakable_text, prepare_text_for_speech
 from speak_voice.voicepeak_diagnostics import get_voicepeak_events, voicepeak_log_path
 from speak_voice.voisona_config import (
     VoiSonaConfig,
@@ -194,13 +194,22 @@ class SpeakRequest(BaseModel):
     intonation: Optional[float] = None
     volume: Optional[float] = None
     style: Optional[str] = None
+    sanitize_for_speech: bool = False
     wait: Optional[bool] = False  # 再生完了まで待機するかどうか
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=20000)
 
 
 class ChatRequest(BaseModel):
     engine: str
     speaker: str
     prompt: str
+    system_prompt: Optional[str] = Field(default=None, max_length=20000)
+    messages: list[ChatMessage] = Field(default_factory=list)
+    auto_speak: bool = True
     api_provider: str  # "openai", "gemini", "ollama", "local", "mock"
     api_key: Optional[str] = None
     base_url: Optional[str] = (
@@ -212,6 +221,32 @@ class ChatRequest(BaseModel):
     intonation: Optional[float] = None
     volume: Optional[float] = None
     style: Optional[str] = None
+
+
+def build_chat_messages(req: ChatRequest) -> list[dict[str, str]]:
+    """固定指示・直近履歴・今回の入力をプロバイダー共通の形式へ整える。"""
+    if len(req.messages) > 40:
+        raise HTTPException(status_code=400, detail="会話履歴は直近40件まで送信できます。")
+    messages: list[dict[str, str]] = []
+    system_prompt = (req.system_prompt or "").strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.extend(
+        {"role": message.role, "content": message.content.strip()}
+        for message in req.messages
+        if message.content.strip()
+    )
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="メッセージを入力してください。")
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def build_gemini_prompt(messages: list[dict[str, str]]) -> str:
+    """Geminiの新旧SDKへ会話の役割を保ったテキストとして渡す。"""
+    labels = {"system": "固定指示", "user": "ユーザー", "assistant": "アシスタント"}
+    return "\n\n".join(f"{labels[item['role']]}:\n{item['content']}" for item in messages)
 
 
 class VoiSonaConfigRequest(BaseModel):
@@ -424,7 +459,8 @@ def speak_text(req: SpeakRequest):
     engine_key = req.engine.lower()
     if engine_key not in ENGINES:
         raise HTTPException(status_code=400, detail=f"Unknown engine: {req.engine}")
-    if not has_speakable_text(req.text):
+    speech_text = prepare_text_for_speech(req.text) if req.sanitize_for_speech else req.text
+    if not has_speakable_text(speech_text):
         raise HTTPException(
             status_code=400,
             detail="読み上げ可能な文字を含むテキストを指定してください。",
@@ -439,7 +475,7 @@ def speak_text(req: SpeakRequest):
     }
 
     result = SpeakResult() if req.wait else None
-    speak_queue.put((engine_key, req.speaker, req.text, options, result))
+    speak_queue.put((engine_key, req.speaker, speech_text, options, result))
 
     if result:
         result.done.wait()
@@ -465,19 +501,23 @@ def chat_and_speak(req: ChatRequest, request: Request):
     engine_key = req.engine.lower()
     if engine_key not in ENGINES:
         raise HTTPException(status_code=400, detail=f"Unknown engine: {req.engine}")
+    chat_messages = build_chat_messages(req)
+    gemini_prompt = build_gemini_prompt(chat_messages)
 
-    # 音声ブリッジの準備
+    # 自動読み上げを無効にした場合は、音声エンジンを起動せず回答だけを返す。
+    bridge: Optional[VoiceAgentBridge] = None
     try:
-        engine_inst = ENGINES[engine_key]()
-        bridge = VoiceAgentBridge(
-            engine=engine_inst,
-            speaker_id=req.speaker,
-            speed=req.speed,
-            pitch=req.pitch,
-            intonation=req.intonation,
-            volume=req.volume,
-            style=req.style,
-        )
+        if req.auto_speak:
+            engine_inst = ENGINES[engine_key]()
+            bridge = VoiceAgentBridge(
+                engine=engine_inst,
+                speaker_id=req.speaker,
+                speed=req.speed,
+                pitch=req.pitch,
+                intonation=req.intonation,
+                volume=req.volume,
+                style=req.style,
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to initialize voice bridge: {str(e)}")
 
@@ -502,12 +542,21 @@ def chat_and_speak(req: ChatRequest, request: Request):
 
     def emit_text(text: str):
         if disconnected.is_set():
-            bridge.cancel()
+            if bridge:
+                bridge.cancel()
             raise RuntimeError("ブラウザとの接続が切断されたため生成を停止しました。")
         stream_queue.put({"type": "text", "text": text})
 
+    def process_response_stream(chunks):
+        if bridge:
+            bridge.speak_stream(chunks)
+        else:
+            for _ in chunks:
+                pass
+
     def run_bridge():
-        bridge.start()
+        if bridge:
+            bridge.start()
         try:
             provider = req.api_provider.lower()
             if provider in ("ollama", "local"):
@@ -533,7 +582,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                     client = OpenAI(base_url=base_url, api_key=api_key)
                     response = client.chat.completions.create(
                         model=model_name,
-                        messages=[{"role": "user", "content": req.prompt}],
+                        messages=chat_messages,
                         stream=True,
                     )
 
@@ -544,7 +593,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                                 emit_text(content)
                                 yield content
 
-                    bridge.speak_stream(local_stream_gen())
+                    process_response_stream(local_stream_gen())
 
                 except Exception as sdk_err:
                     print(f"[Local LLM SDK Error, fallback to REST API]: {sdk_err}")
@@ -552,7 +601,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                     ollama_native_url = f"{ollama_root_url(base_url)}/api/chat"
                     payload = {
                         "model": model_name,
-                        "messages": [{"role": "user", "content": req.prompt}],
+                        "messages": chat_messages,
                         "stream": True,
                     }
                     resp = requests.post(ollama_native_url, json=payload, stream=True, timeout=60)
@@ -570,7 +619,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                                     emit_text(msg_content)
                                     yield msg_content
 
-                    bridge.speak_stream(ollama_rest_gen())
+                    process_response_stream(ollama_rest_gen())
 
             elif provider == "openai":
                 if not req.api_key:
@@ -581,7 +630,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                 model_name = req.model_name or "gpt-4o-mini"
                 response = client.chat.completions.create(
                     model=model_name,
-                    messages=[{"role": "user", "content": req.prompt}],
+                    messages=chat_messages,
                     stream=True,
                 )
 
@@ -592,7 +641,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                             emit_text(content)
                             yield content
 
-                bridge.speak_stream(openai_gen())
+                process_response_stream(openai_gen())
 
             elif provider == "gemini":
                 if not req.api_key:
@@ -639,7 +688,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                     for m_name in candidates:
                         try:
                             stream = client.models.generate_content_stream(
-                                model=m_name, contents=req.prompt
+                                model=m_name, contents=gemini_prompt
                             )
                             # ストリーミング初期化時の404エラーなどを事前にキャッチするため最初のチャンクを取得
                             stream_iter = iter(stream)
@@ -667,7 +716,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                                 emit_text(chunk.text)
                                 yield chunk.text
 
-                    bridge.speak_stream(gemini_gen())
+                    process_response_stream(gemini_gen())
                 else:
                     import google.generativeai as genai
 
@@ -696,7 +745,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                     for m_name in candidates:
                         try:
                             model = genai.GenerativeModel(m_name)
-                            response = model.generate_content(req.prompt, stream=True)
+                            response = model.generate_content(gemini_prompt, stream=True)
                             break
                         except Exception as e:
                             last_err = e
@@ -710,7 +759,7 @@ def chat_and_speak(req: ChatRequest, request: Request):
                                 emit_text(chunk.text)
                                 yield chunk.text
 
-                    bridge.speak_stream(legacy_gemini_gen())
+                    process_response_stream(legacy_gemini_gen())
 
             else:  # mock
 
@@ -719,11 +768,13 @@ def chat_and_speak(req: ChatRequest, request: Request):
                         emit_text(text)
                         yield text
 
-                bridge.speak_stream(mock_gen())
+                process_response_stream(mock_gen())
 
-            bridge.wait_until_done()
+            if bridge:
+                bridge.wait_until_done()
         finally:
-            bridge.stop()
+            if bridge:
+                bridge.stop()
 
     def run_and_report():
         try:
@@ -743,7 +794,8 @@ def chat_and_speak(req: ChatRequest, request: Request):
             while True:
                 if await request.is_disconnected():
                     disconnected.set()
-                    bridge.cancel()
+                    if bridge:
+                        bridge.cancel()
                     break
                 try:
                     event = stream_queue.get_nowait()
@@ -755,7 +807,8 @@ def chat_and_speak(req: ChatRequest, request: Request):
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         finally:
             disconnected.set()
-            bridge.cancel()
+            if bridge:
+                bridge.cancel()
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 

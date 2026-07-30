@@ -8,7 +8,15 @@ from fastapi.testclient import TestClient
 
 from speak_voice.engines import VoicepeakEngine
 from speak_voice.voisona_config import VoiSonaConfig
-from speak_voice.web.app import app, get_ollama_models, ollama_http_error, ollama_root_url
+from speak_voice.web.app import (
+    ChatRequest,
+    app,
+    build_chat_messages,
+    build_gemini_prompt,
+    get_ollama_models,
+    ollama_http_error,
+    ollama_root_url,
+)
 
 client = TestClient(app)
 
@@ -52,6 +60,41 @@ def test_ollama_http_error_includes_api_error_detail():
     error = ollama_http_error(response)
 
     assert "model 'qwen2.5' not found" in str(error)
+
+
+def test_chat_messages_include_system_prompt_history_and_current_prompt():
+    request = ChatRequest(
+        engine="voicevox",
+        speaker="1",
+        prompt="続けて",
+        system_prompt="簡潔に答える",
+        messages=[
+            {"role": "user", "content": "最初の質問"},
+            {"role": "assistant", "content": "最初の回答"},
+        ],
+        api_provider="mock",
+    )
+
+    assert build_chat_messages(request) == [
+        {"role": "system", "content": "簡潔に答える"},
+        {"role": "user", "content": "最初の質問"},
+        {"role": "assistant", "content": "最初の回答"},
+        {"role": "user", "content": "続けて"},
+    ]
+
+
+def test_gemini_prompt_keeps_conversation_roles():
+    prompt = build_gemini_prompt(
+        [
+            {"role": "system", "content": "短く答える"},
+            {"role": "user", "content": "質問"},
+            {"role": "assistant", "content": "回答"},
+        ]
+    )
+
+    assert "固定指示:\n短く答える" in prompt
+    assert "ユーザー:\n質問" in prompt
+    assert "アシスタント:\n回答" in prompt
 
 
 def test_list_engines():
@@ -241,6 +284,18 @@ def test_chat_input_supports_multiline_and_shift_enter_send():
     assert 'e.key === "Enter" && e.shiftKey && !e.isComposing' in response.text
 
 
+def test_web_console_contains_prompt_history_and_message_actions():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="system-prompt-input"' in response.text
+    assert 'id="conversation-select"' in response.text
+    assert 'indexedDB.open("speak-voice-chat", 1)' in response.text
+    assert '["copy", "コピー"]' in response.text
+    assert '["regenerate", "再生成"]' in response.text
+    assert 'id="auto-speak-response"' in response.text
+
+
 def test_hook_speak_validation():
     # 不正なエンジンキーでのテスト
     payload = {
@@ -312,6 +367,22 @@ def test_speak_rejects_symbols_only_before_queueing():
     assert "読み上げ可能な文字" in response.json()["detail"]
 
 
+def test_speak_can_sanitize_markdown_for_replay():
+    payload = {
+        "engine": "voicevox",
+        "speaker": "1",
+        "text": "**説明** https://example.com",
+        "sanitize_for_speech": True,
+        "wait": False,
+    }
+    with patch("speak_voice.web.app.speak_queue.put") as put:
+        response = client.post("/api/speak", json=payload)
+
+    assert response.status_code == 200
+    queued = put.call_args.args[0]
+    assert queued[2] == "説明 URL"
+
+
 def test_chat_mock_streams_text_and_done_event():
     payload = {
         "engine": "voicevox",
@@ -333,3 +404,22 @@ def test_chat_mock_streams_text_and_done_event():
     assert events[-1] == {"type": "done"}
     assert "こんにちは！" in "".join(event["text"] for event in events if event["type"] == "text")
     bridge.wait_until_done.assert_called_once()
+
+
+def test_chat_can_generate_without_initializing_voice_bridge():
+    payload = {
+        "engine": "voicevox",
+        "speaker": "",
+        "prompt": "音声なし",
+        "api_provider": "mock",
+        "auto_speak": False,
+    }
+    with (
+        patch("speak_voice.web.app.VoiceAgentBridge") as bridge_cls,
+        patch("time.sleep"),
+    ):
+        response = client.post("/api/chat", json=payload)
+
+    assert response.status_code == 200
+    assert "音声なし" in response.text
+    bridge_cls.assert_not_called()
