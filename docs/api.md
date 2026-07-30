@@ -65,6 +65,26 @@ bridge.stop()
 | POST | `/api/hook/speak` | 外部アプリ向け読み上げ |
 | POST | `/api/chat` | LLM回答のストリーミング表示・読み上げ |
 
+`POST /api/chat`では、`system_prompt`へ固定指示、`messages`へ直近40件までの`user`／`assistant`履歴を指定できます。`auto_speak: false`にすると音声エンジンを起動せず、回答生成と表示だけを行います。
+
+```json
+{
+  "engine": "voicevox",
+  "speaker": "2",
+  "prompt": "続きを教えて",
+  "system_prompt": "日本語で簡潔に回答してください",
+  "messages": [
+    {"role": "user", "content": "最初の質問"},
+    {"role": "assistant", "content": "最初の回答"}
+  ],
+  "api_provider": "ollama",
+  "model_name": "gemma3",
+  "auto_speak": true
+}
+```
+
+Webコンソールの会話履歴と固定プロンプトはブラウザ内へ保存されます。APIキーは履歴へ含めません。
+
 ### フックAPI
 
 ```bash

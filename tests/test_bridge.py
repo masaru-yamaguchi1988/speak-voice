@@ -4,7 +4,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from speak_voice.bridge import SentenceSplitter, VoiceAgentBridge, VoiceBridgeError
-from speak_voice.text_utils import has_speakable_text
+from speak_voice.text_utils import (
+    StreamingSpeechFilter,
+    has_speakable_text,
+    prepare_text_for_speech,
+)
 
 
 def test_sentence_splitter_handles_streamed_japanese_sentences():
@@ -23,6 +27,27 @@ def test_speakable_text_accepts_letters_and_numbers(text):
 @pytest.mark.parametrize("text", ["", " \n", ":", "**", "！？", "😊"])
 def test_speakable_text_rejects_symbols_only(text):
     assert has_speakable_text(text) is False
+
+
+def test_prepare_text_for_speech_removes_markdown_and_urls():
+    text = "詳細は **公式サイト** https://example.com と[説明](https://example.com/help)です。"
+
+    assert prepare_text_for_speech(text) == "詳細は 公式サイト URL と説明です。"
+
+
+def test_streaming_speech_filter_removes_code_across_chunks():
+    speech_filter = StreamingSpeechFilter()
+
+    result = "".join(
+        [
+            speech_filter.feed("説明です。``"),
+            speech_filter.feed("`python\nprint('読まない')\n`"),
+            speech_filter.feed("``続きです。"),
+            speech_filter.flush(),
+        ]
+    )
+
+    assert result == "説明です。続きです。"
 
 
 def test_bridge_does_not_enqueue_symbols_only():
