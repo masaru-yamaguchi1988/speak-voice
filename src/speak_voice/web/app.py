@@ -183,6 +183,30 @@ def get_ollama_models(base_url: str) -> list[str]:
     ]
 
 
+def get_ollama_thinking_models(base_url: str, models: list[str]) -> list[str]:
+    """thinking機能を公開しているOllamaモデル名を返します。"""
+    root_url = ollama_root_url(base_url)
+    thinking_models = []
+    for model in models:
+        try:
+            response = requests.post(
+                f"{root_url}/api/show",
+                json={"model": model},
+                timeout=5,
+            )
+            response.raise_for_status()
+            details = response.json()
+            capabilities = details.get("capabilities", [])
+            family = str(details.get("details", {}).get("family", "")).lower()
+            level_only = family in {"gptoss", "gpt-oss"} or model.lower().startswith("gpt-oss")
+            if "thinking" in capabilities and not level_only:
+                thinking_models.append(model)
+        except (requests.RequestException, ValueError, AttributeError):
+            # 古いOllamaや取得できないモデルでは、無効化UIを出さず通常動作を維持します。
+            continue
+    return thinking_models
+
+
 def get_openai_compatible_models(base_url: str) -> list[str]:
     """OpenAI互換APIから利用可能なモデル名を取得します。"""
     response = requests.get(f"{base_url.rstrip('/')}/models", timeout=5)
@@ -238,6 +262,7 @@ class ChatRequest(BaseModel):
         None  # ローカルLLM/Ollama用のベースURL (例: http://localhost:11434/v1)
     )
     model_name: Optional[str] = None  # カスタムモデル名 (例: qwen2.5, gpt-4o-mini)
+    disable_thinking: bool = False
     speed: Optional[float] = None
     pitch: Optional[float] = None
     intonation: Optional[float] = None
@@ -421,12 +446,14 @@ def list_models(provider: str, base_url: Optional[str] = None):
         if provider == "ollama":
             url = base_url or "http://localhost:11434/v1"
             models = get_ollama_models(url)
+            thinking_models = get_ollama_thinking_models(url, models)
         elif provider == "local":
             url = base_url or "http://localhost:1234/v1"
             models = get_openai_compatible_models(url)
+            thinking_models = []
         else:
-            return {"models": []}
-        return {"models": models}
+            return {"models": [], "thinking_models": []}
+        return {"models": models, "thinking_models": thinking_models}
     except requests.RequestException as error:
         raise HTTPException(
             status_code=502,
@@ -612,6 +639,43 @@ def chat_and_speak(req: ChatRequest, request: Request):
                     model_name = "local-model"
                 api_key = req.api_key or "ollama"
 
+                def process_ollama_rest(*, think: Optional[bool] = None):
+                    ollama_native_url = f"{ollama_root_url(base_url)}/api/chat"
+                    payload = {
+                        "model": model_name,
+                        "messages": chat_messages,
+                        "stream": True,
+                    }
+                    if think is not None:
+                        payload["think"] = think
+                    resp = requests.post(
+                        ollama_native_url,
+                        json=payload,
+                        stream=True,
+                        timeout=60,
+                    )
+                    if not resp.ok:
+                        raise ollama_http_error(resp)
+
+                    def ollama_rest_gen():
+                        for line in resp.iter_lines():
+                            if line:
+                                data = json.loads(line.decode("utf-8"))
+                                msg_content = data.get("message", {}).get("content", "")
+                                if msg_content:
+                                    emit_text(msg_content)
+                                    yield msg_content
+
+                    process_response_stream(ollama_rest_gen())
+
+                # thinking対応モデルで明示的に無効化する場合は、Ollamaの
+                # ネイティブAPIへ `think: false` を確実に渡します。
+                if provider == "ollama" and req.disable_thinking:
+                    process_ollama_rest(think=False)
+                    if bridge:
+                        bridge.wait_until_done()
+                    return
+
                 # OpenAI SDKを用いたローカルOpenAI互換呼び出し
                 try:
                     from openai import OpenAI
@@ -634,29 +698,8 @@ def chat_and_speak(req: ChatRequest, request: Request):
 
                 except Exception as sdk_err:
                     print(f"[Local LLM SDK Error, fallback to REST API]: {sdk_err}")
-                    # Ollama REST API (`/api/generate` または `/api/chat`) への直接フォールバック
-                    ollama_native_url = f"{ollama_root_url(base_url)}/api/chat"
-                    payload = {
-                        "model": model_name,
-                        "messages": chat_messages,
-                        "stream": True,
-                    }
-                    resp = requests.post(ollama_native_url, json=payload, stream=True, timeout=60)
-                    if not resp.ok:
-                        raise ollama_http_error(resp)
-
-                    import json
-
-                    def ollama_rest_gen():
-                        for line in resp.iter_lines():
-                            if line:
-                                data = json.loads(line.decode("utf-8"))
-                                msg_content = data.get("message", {}).get("content", "")
-                                if msg_content:
-                                    emit_text(msg_content)
-                                    yield msg_content
-
-                    process_response_stream(ollama_rest_gen())
+                    # Ollama REST API (`/api/chat`) への直接フォールバック
+                    process_ollama_rest()
 
             elif provider == "openai":
                 if not req.api_key:

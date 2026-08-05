@@ -14,6 +14,7 @@ from speak_voice.web.app import (
     build_chat_messages,
     build_gemini_prompt,
     get_ollama_models,
+    get_ollama_thinking_models,
     ollama_http_error,
     ollama_root_url,
 )
@@ -51,6 +52,39 @@ def test_get_ollama_models_returns_installed_model_names():
 
     assert models == ["gemma3:latest", "qwen3:8b"]
     get.assert_called_once_with("http://localhost:11434/api/tags", timeout=5)
+
+
+def test_get_ollama_thinking_models_uses_model_capabilities():
+    thinking = MagicMock()
+    thinking.json.return_value = {"capabilities": ["completion", "thinking"]}
+    normal = MagicMock()
+    normal.json.return_value = {"capabilities": ["completion"]}
+    with patch("speak_voice.web.app.requests.post", side_effect=[thinking, normal]) as post:
+        models = get_ollama_thinking_models(
+            "http://localhost:11434/v1",
+            ["qwen3:8b", "gemma3:4b"],
+        )
+
+    assert models == ["qwen3:8b"]
+    assert [call.kwargs["json"] for call in post.call_args_list] == [
+        {"model": "qwen3:8b"},
+        {"model": "gemma3:4b"},
+    ]
+
+
+def test_get_ollama_thinking_models_excludes_level_only_gpt_oss():
+    response = MagicMock()
+    response.json.return_value = {
+        "capabilities": ["completion", "thinking"],
+        "details": {"family": "gptoss"},
+    }
+    with patch("speak_voice.web.app.requests.post", return_value=response):
+        models = get_ollama_thinking_models(
+            "http://localhost:11434/v1",
+            ["gpt-oss:20b"],
+        )
+
+    assert models == []
 
 
 def test_ollama_http_error_includes_api_error_detail():
@@ -125,9 +159,15 @@ def test_voicepeak_diagnostics_endpoint():
 
 
 def test_list_ollama_models_endpoint():
-    with patch(
-        "speak_voice.web.app.get_ollama_models",
-        return_value=["gemma3:latest", "qwen3:8b"],
+    with (
+        patch(
+            "speak_voice.web.app.get_ollama_models",
+            return_value=["gemma3:latest", "qwen3:8b"],
+        ),
+        patch(
+            "speak_voice.web.app.get_ollama_thinking_models",
+            return_value=["qwen3:8b"],
+        ),
     ):
         response = client.get(
             "/api/models",
@@ -138,7 +178,10 @@ def test_list_ollama_models_endpoint():
         )
 
     assert response.status_code == 200
-    assert response.json() == {"models": ["gemma3:latest", "qwen3:8b"]}
+    assert response.json() == {
+        "models": ["gemma3:latest", "qwen3:8b"],
+        "thinking_models": ["qwen3:8b"],
+    }
 
 
 def test_voicevox_engine_settings_match_supported_ranges():
@@ -454,3 +497,37 @@ def test_chat_can_generate_without_initializing_voice_bridge():
     assert response.status_code == 200
     assert "音声なし" in response.text
     bridge_cls.assert_not_called()
+
+
+def test_ollama_chat_can_disable_thinking_with_native_api():
+    ollama_response = MagicMock(ok=True)
+    ollama_response.iter_lines.return_value = [
+        '{"message":{"content":"短い回答"},"done":false}'.encode(),
+        b'{"message":{"content":""},"done":true}',
+    ]
+    payload = {
+        "engine": "voicevox",
+        "speaker": "",
+        "prompt": "簡潔に答えて",
+        "api_provider": "ollama",
+        "base_url": "http://localhost:11434/v1",
+        "model_name": "qwen3:8b",
+        "disable_thinking": True,
+        "auto_speak": False,
+    }
+    with patch("speak_voice.web.app.requests.post", return_value=ollama_response) as post:
+        response = client.post("/api/chat", json=payload)
+
+    assert response.status_code == 200
+    assert "短い回答" in response.text
+    assert post.call_args.args[0] == "http://localhost:11434/api/chat"
+    assert post.call_args.kwargs["json"]["think"] is False
+
+
+def test_web_console_has_model_specific_thinking_control():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'id="disable-thinking"' in response.text
+    assert "thinkingModels.has(modelSelect.value)" in response.text
+    assert "disable_thinking: disableThinking.checked" in response.text

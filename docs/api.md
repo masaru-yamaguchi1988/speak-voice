@@ -79,9 +79,12 @@ bridge.stop()
   ],
   "api_provider": "ollama",
   "model_name": "gemma3",
+  "disable_thinking": false,
   "auto_speak": true
 }
 ```
+
+Ollamaのthinking対応モデルでは、`disable_thinking: true`を指定するとネイティブAPIへ`think: false`を送信します。
 
 Webコンソールの会話履歴と固定プロンプトはブラウザ内へ保存されます。APIキーは履歴へ含めません。
 

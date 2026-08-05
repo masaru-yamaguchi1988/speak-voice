@@ -49,6 +49,10 @@
           </button>
         </div>
         <p id="model-status" class="model-status" aria-live="polite"></p>
+        <label id="disable-thinking-wrapper" class="remember-setting thinking-setting" hidden>
+          <input type="checkbox" id="disable-thinking">
+          <span>思考を無効化（think=false）</span>
+        </label>
       </div>
 
       <!-- 音声合成エンジン選択 -->
@@ -259,6 +263,8 @@
     const modelSelect = document.getElementById("model-name");
     const modelStatus = document.getElementById("model-status");
     const reloadModelsBtn = document.getElementById("reload-models-btn");
+    const disableThinkingWrapper = document.getElementById("disable-thinking-wrapper");
+    const disableThinking = document.getElementById("disable-thinking");
     const voisonaConfigCard = document.getElementById("voisona-config-card");
     const voisonaApiUrl = document.getElementById("voisona-api-url");
     const voisonaApiUser = document.getElementById("voisona-api-user");
@@ -271,6 +277,15 @@
     const voisonaConfigStatus = document.getElementById("voisona-config-status");
     const voisonaConnectionBadge = document.getElementById("voisona-connection-badge");
     
+    let thinkingModels = new Set();
+
+    function updateThinkingControl() {
+      const supported = providerSelect.value === "ollama" && thinkingModels.has(modelSelect.value);
+      disableThinkingWrapper.hidden = !supported;
+      disableThinking.disabled = !supported;
+      if (!supported) disableThinking.checked = false;
+    }
+
     // プロバイダー変更時の入力制御
     providerSelect.addEventListener("change", async () => {
       const val = providerSelect.value;
@@ -294,10 +309,12 @@
 
     async function loadModels() {
       const provider = providerSelect.value;
+      thinkingModels = new Set();
       modelSelect.innerHTML = '<option value="">自動選択</option>';
       if (!["ollama", "local"].includes(provider)) {
         modelStatus.textContent = "ローカルLLM選択時に利用可能なモデルを表示します。";
         reloadModelsBtn.disabled = true;
+        updateThinkingControl();
         return;
       }
 
@@ -312,6 +329,7 @@
         const resp = await fetch(`/api/models?${query}`);
         const result = await resp.json();
         if (!resp.ok) throw new Error(result.detail || "モデル一覧を取得できませんでした");
+        thinkingModels = new Set(result.thinking_models || []);
         result.models.forEach(name => {
           const option = document.createElement("option");
           option.value = name;
@@ -324,8 +342,10 @@
         } else {
           modelStatus.textContent = "利用可能なモデルがありません。";
         }
+        updateThinkingControl();
       } catch (err) {
         modelStatus.textContent = `取得エラー: ${err.message}`;
+        updateThinkingControl();
       } finally {
         modelSelect.disabled = false;
         reloadModelsBtn.disabled = false;
@@ -334,6 +354,7 @@
 
     reloadModelsBtn.addEventListener("click", loadModels);
     baseUrlInput.addEventListener("change", loadModels);
+    modelSelect.addEventListener("change", updateThinkingControl);
 
     function setVoiSonaConnectionState(connected, label) {
       voisonaConnectionBadge.textContent = label;
@@ -1019,6 +1040,7 @@
             api_key: apiKey,
             base_url: baseUrl,
             model_name: modelName,
+            disable_thinking: disableThinking.checked && !disableThinking.disabled,
             system_prompt: systemPromptEnabled.checked ? systemPromptInput.value.trim() : null,
             messages: historyForRequest,
             auto_speak: autoSpeakResponse.checked
